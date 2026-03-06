@@ -254,7 +254,6 @@ class MessageRenderer:
             MessageType.MCP_TOOL_CALL_OUTPUT,
         ):
             if s.filter_tool_messages:
-                # 定义媒体类型常量（移到循环外以提高性能）
                 media_types = (
                     ContentType.IMAGE,
                     ContentType.AUDIO,
@@ -280,7 +279,7 @@ class MessageRenderer:
                                 if getattr(p, "type", None) in media_types
                             ],
                         )
-                return media_parts  # 简化返回语句
+                return media_parts
             parts = _parts_for_tool_output(content)
             if not parts:
                 parts = [TextContent(text=f"[{msg_type}]")]
