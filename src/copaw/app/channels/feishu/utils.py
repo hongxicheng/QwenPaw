@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Feishu channel pure helpers (session id, sender display, markdown)."""
+"""Feishu channel helpers (session id, sender display, markdown, table)."""
 
 import json
 import re
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from .constants import FEISHU_SESSION_ID_SUFFIX_LEN
 
@@ -49,3 +49,143 @@ def normalize_feishu_md(text: str) -> str:
     # Ensure newline before code fence so Feishu parses it
     text = re.sub(r"([^\n])(```)", r"\1\n\2", text)
     return text
+
+
+def _parse_md_table(table_lines: List[str]) -> Optional[Dict[str, Any]]:
+    """Parse GFM table lines into a Feishu native table component dict.
+
+    Returns None if the lines don't form a valid table.
+    The Feishu table component schema:
+    {
+      "tag": "table",
+      "page_size": N,
+      "columns": [{"name": "col_key", "display_name": "Header", ...}, ...],
+      "rows": [{"col_key": "cell_value", ...}, ...]
+    }
+    """
+    # Filter out empty lines kept in block
+    lines = [ln for ln in table_lines if ln.strip()]
+    if len(lines) < 2:
+        return None
+    # Row 0: header, Row 1: separator (---|---), Row 2+: data rows
+    sep_idx = None
+    for i, ln in enumerate(lines):
+        # Separator row: only contains |, -, :, spaces
+        if re.match(r"^\s*\|[\s\-\:\|]+\|\s*$", ln):
+            sep_idx = i
+            break
+    if sep_idx is None or sep_idx == 0:
+        return None
+
+    def split_row(line: str) -> List[str]:
+        # Strip leading/trailing | and split
+        stripped = line.strip()
+        if stripped.startswith("|"):
+            stripped = stripped[1:]
+        if stripped.endswith("|"):
+            stripped = stripped[:-1]
+        return [c.strip() for c in stripped.split("|")]
+
+    headers = split_row(lines[0])
+    if not headers:
+        return None
+    # Build column keys (safe ASCII slugs)
+    col_keys = [f"col{i}" for i in range(len(headers))]
+
+    # Calculate max content length per column.
+    # Chinese chars count as 2.2 units, ASCII chars as 1 unit.
+    def char_width(text: str) -> float:  # Allow fractional units
+        return sum(2.2 if ord(c) > 127 else 1 for c in text)
+
+    max_widths = [char_width(h) for h in headers]
+    for line in lines[sep_idx + 1 :]:
+        cells = split_row(line)
+        for i, cell in enumerate(cells):
+            if i < len(max_widths):
+                max_widths[i] = max(max_widths[i], char_width(cell))
+
+    # Use "auto" width to let Feishu calculate optimal column widths.
+    # Avoids invalid width errors from manual calculation.
+    def calc_width(units: float) -> str:
+        return "auto"
+
+    columns = [
+        {
+            "name": col_keys[i],
+            "display_name": headers[i],
+            "width": calc_width(max_widths[i]),
+            "horizontal_align": "left",
+        }
+        for i in range(len(headers))
+    ]
+    rows = []
+    for line in lines[sep_idx + 1 :]:
+        cells = split_row(line)
+        row: Dict[str, Any] = {}
+        for i, key in enumerate(col_keys):
+            cell_text = cells[i] if i < len(cells) else ""
+            # Strip Markdown bold/italic markers; table cells are plain strings.
+            cell_text = re.sub(r"\*{1,2}(.+?)\*{1,2}", r"\1", cell_text)
+            row[key] = cell_text
+        rows.append(row)
+    if not rows:
+        return None
+    return {
+        "tag": "table",
+        "page_size": max(len(rows), 10),
+        "columns": columns,
+        "rows": rows,
+    }
+
+
+def _convert_md_headings_to_bold(text: str) -> str:
+    """Convert Markdown headings (##, ###, etc.) to bold text.
+
+    Feishu's interactive card markdown element does not support # headings.
+    """
+    return re.sub(r"^#{1,6}\s+(.+)$", r"**\1**", text, flags=re.MULTILINE)
+
+
+def build_interactive_content(text: str) -> str:
+    """Build an interactive card JSON with mixed markdown + native table.
+
+    Splits the text into non-table segments (rendered as markdown elements)
+    and GFM table blocks (rendered as Feishu native table components).
+    Falls back to a plain markdown element if table parsing fails.
+    Returns a JSON string suitable for msg_type='interactive'.
+    """
+    lines = text.split("\n")
+    elements: List[Dict[str, Any]] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if re.match(r"^\s*\|", line):
+            # Collect the full table block
+            table_block: List[str] = []
+            while i < len(lines) and re.match(r"^\s*\|", lines[i]):
+                table_block.append(lines[i])
+                i += 1
+            table_elem = _parse_md_table(table_block)
+            if table_elem:
+                elements.append(table_elem)
+            else:
+                # Fallback: render as plain markdown text
+                fallback = _convert_md_headings_to_bold("\n".join(table_block))
+                elements.append({"tag": "markdown", "content": fallback})
+        else:
+            # Collect non-table lines
+            text_block: List[str] = []
+            while i < len(lines) and not re.match(r"^\s*\|", lines[i]):
+                text_block.append(lines[i])
+                i += 1
+            content = "\n".join(text_block).strip()
+            if content:
+                # Convert headings to bold for interactive card markdown
+                content = _convert_md_headings_to_bold(content)
+                elements.append({"tag": "markdown", "content": content})
+    if not elements:
+        elements = [
+            {"tag": "markdown", "content": _convert_md_headings_to_bold(text)},
+        ]
+    card = {"elements": elements}
+    return json.dumps(card, ensure_ascii=False)

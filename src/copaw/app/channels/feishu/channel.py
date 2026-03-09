@@ -51,6 +51,7 @@ from .constants import (
     FEISHU_USER_NAME_FETCH_TIMEOUT,
 )
 from .utils import (
+    build_interactive_content,
     extract_json_key,
     normalize_feishu_md,
     sender_display_string,
@@ -1208,10 +1209,25 @@ class FeishuChannel(BaseChannel):
         receive_id: str,
         body: str,
     ) -> bool:
-        """Send text as post (md). Body already has bot_prefix if needed."""
+        """Send text as post (md) or interactive card (when body has tables).
+        Body already has bot_prefix if needed."""
+        import re as _re
+
+        has_table = bool(_re.search(r"^\s*\|", body, _re.MULTILINE))
+        loop = asyncio.get_running_loop()
+        if has_table:
+            content = build_interactive_content(body)
+            return await loop.run_in_executor(
+                None,
+                lambda: self._send_message_sync(
+                    receive_id_type,
+                    receive_id,
+                    "interactive",
+                    content,
+                ),
+            )
         post = self._build_post_content(body, [])
         content = json.dumps(post, ensure_ascii=False)
-        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None,
             lambda: self._send_message_sync(
