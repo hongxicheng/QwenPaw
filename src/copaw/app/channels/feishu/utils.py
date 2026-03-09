@@ -98,7 +98,7 @@ def _parse_md_table(table_lines: List[str]) -> Optional[Dict[str, Any]]:
         row: Dict[str, Any] = {}
         for i, key in enumerate(col_keys):
             cell_text = cells[i] if i < len(cells) else ""
-            # Strip Markdown bold/italic markers; table cells are plain strings.
+            # Strip Markdown markers; table cells are plain strings.
             cell_text = re.sub(r"\*{1,2}(.+?)\*{1,2}", r"\1", cell_text)
             row[key] = cell_text
         rows.append(row)
