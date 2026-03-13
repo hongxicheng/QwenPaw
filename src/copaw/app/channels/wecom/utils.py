@@ -85,7 +85,8 @@ def _format_table(lines: List[str]) -> List[str]:
     col_count = max(len(r) for r in rows)
     widths: List[int] = [0] * col_count
     for row in rows:
-        for j, cell in enumerate(row):
+        for j in range(col_count):
+            cell = row[j] if j < len(row) else ""
             widths[j] = max(widths[j], len(cell))
 
     # Format rows with proper padding, inserting separator after header
@@ -99,7 +100,7 @@ def _format_table(lines: List[str]) -> List[str]:
         if idx == 0:
             sep = (
                 "| "
-                + " | ".join("-" * widths[j] for j in range(col_count))
+                + " | ".join("-" * max(3, widths[j]) for j in range(col_count))
                 + " |"
             )
             formatted.append(sep)
