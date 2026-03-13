@@ -63,9 +63,6 @@ def _format_table(lines: List[str]) -> List[str]:
     sep_pattern = re.compile(r"^[\s\-:|]+$")
     has_separator = sep_pattern.match(lines[1]) is not None
 
-    if not has_separator:
-        return lines  # Not a valid GFM table
-
     # Calculate column widths
     col_count = max(len(r) for r in rows)
     widths: List[int] = [0] * col_count

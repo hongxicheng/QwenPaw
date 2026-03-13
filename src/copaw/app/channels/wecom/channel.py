@@ -12,6 +12,7 @@ Sends replies via the same WebSocket channel using stream mode
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import sys
@@ -158,7 +159,9 @@ class WecomChannel(BaseChannel):
             allow_from=getattr(config, "allow_from", []) or [],
             deny_message=getattr(config, "deny_message", "") or "",
             max_reconnect_attempts=int(
-                getattr(config, "max_reconnect_attempts", -1) or -1,
+                -1
+                if getattr(config, "max_reconnect_attempts", None) is None
+                else getattr(config, "max_reconnect_attempts"),
             ),
         )
 
@@ -228,7 +231,7 @@ class WecomChannel(BaseChannel):
             sender_id,
             meta,
         )
-        user_id = payload.get("user_id") or sender_id
+        user_id = payload["user_id"] if "user_id" in payload else sender_id
         request = self.build_agent_request_from_user_content(
             channel_id=channel_id,
             sender_id=user_id,
@@ -452,7 +455,9 @@ class WecomChannel(BaseChannel):
             native = {
                 "channel_id": self.channel,
                 "sender_id": sender_id,
-                "user_id": sender_id,
+                # Group chats share one session; omit user_id so the
+                # session file is keyed by session_id only.
+                "user_id": "" if is_group else sender_id,
                 "session_id": session_id,
                 "content_parts": content_parts,
                 "meta": meta,
@@ -506,7 +511,8 @@ class WecomChannel(BaseChannel):
             safe_name = (
                 "".join(c for c in fn if c.isalnum() or c in "-_.") or "media"
             )
-            path = self._media_dir / f"wecom_{id(url)}_{safe_name}"
+            url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
+            path = self._media_dir / f"wecom_{url_hash}_{safe_name}"
             path.write_bytes(data)
             return str(path)
         except Exception:
