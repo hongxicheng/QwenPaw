@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=too-many-statements,too-many-branches
 # pylint: disable=too-many-return-statements,too-many-instance-attributes
+# pylint: disable=too-many-nested-blocks
 """WeCom (Enterprise WeChat) Channel.
 
 Uses the aibot WebSocket SDK to receive messages from WeCom AI Bot.
@@ -11,10 +12,7 @@ Sends replies via the same WebSocket channel using stream mode
 from __future__ import annotations
 
 import asyncio
-import base64
-import json
 import logging
-import mimetypes
 import os
 import sys
 import threading
@@ -28,6 +26,7 @@ from agentscope_runtime.engine.schemas.agent_schemas import (
     ImageContent,
     TextContent,
 )
+from aibot import WSClient, WSClientOptions, generate_req_id
 
 from ..base import (
     BaseChannel,
@@ -36,8 +35,6 @@ from ..base import (
     OutgoingContentPart,
     ProcessHandler,
 )
-from ..utils import file_url_to_local_path
-from .aibot import WSClient, WSClientOptions, generate_req_id
 from .utils import format_markdown_tables
 
 logger = logging.getLogger(__name__)
@@ -127,7 +124,7 @@ class WecomChannel(BaseChannel):
             allow_from=allow_from,
             deny_message=os.getenv("WECOM_DENY_MESSAGE", ""),
             max_reconnect_attempts=int(
-                os.getenv("WECOM_MAX_RECONNECT_ATTEMPTS", "-1")
+                os.getenv("WECOM_MAX_RECONNECT_ATTEMPTS", "-1"),
             ),
         )
 
@@ -161,7 +158,7 @@ class WecomChannel(BaseChannel):
             allow_from=getattr(config, "allow_from", []) or [],
             deny_message=getattr(config, "deny_message", "") or "",
             max_reconnect_attempts=int(
-                getattr(config, "max_reconnect_attempts", -1) or -1
+                getattr(config, "max_reconnect_attempts", -1) or -1,
             ),
         )
 
@@ -193,9 +190,9 @@ class WecomChannel(BaseChannel):
         """
         h = (to_handle or "").strip()
         if h.startswith("wecom:group:"):
-            return h[len("wecom:group:"):]
+            return h[len("wecom:group:") :]
         if h.startswith("wecom:"):
-            return h[len("wecom:"):]
+            return h[len("wecom:") :]
         return h
 
     def to_handle_from_target(self, *, user_id: str, session_id: str) -> str:
@@ -255,11 +252,13 @@ class WecomChannel(BaseChannel):
         return {
             "channel_id": first.get("channel_id") or self.channel,
             "sender_id": last.get(
-                "sender_id", first.get("sender_id", "")
+                "sender_id",
+                first.get("sender_id", ""),
             ),
             "user_id": last.get("user_id", first.get("user_id", "")),
             "session_id": last.get(
-                "session_id", first.get("session_id", "")
+                "session_id",
+                first.get("session_id", ""),
             ),
             "content_parts": merged_parts,
             "meta": dict(last.get("meta") or {}),
@@ -304,9 +303,8 @@ class WecomChannel(BaseChannel):
 
             # Build unique message id for dedup
             msg_id = (
-                (body.get("msgid") or "")
-                or f"{sender_id}_{body.get('send_time', '')}"
-            )
+                body.get("msgid") or ""
+            ) or f"{sender_id}_{body.get('send_time', '')}"
             if msg_id and self._is_duplicate(msg_id):
                 return
 
@@ -333,7 +331,7 @@ class WecomChannel(BaseChannel):
                             ImageContent(
                                 type=ContentType.IMAGE,
                                 image_url=path,
-                            )
+                            ),
                         )
                     else:
                         text_parts.append("[image: download failed]")
@@ -365,7 +363,7 @@ class WecomChannel(BaseChannel):
                             FileContent(
                                 type=ContentType.FILE,
                                 file_url=path,
-                            )
+                            ),
                         )
                     else:
                         text_parts.append("[file: download failed]")
@@ -396,7 +394,7 @@ class WecomChannel(BaseChannel):
                                     ImageContent(
                                         type=ContentType.IMAGE,
                                         image_url=path,
-                                    )
+                                    ),
                                 )
                             else:
                                 text_parts.append("[image: download failed]")
@@ -429,7 +427,8 @@ class WecomChannel(BaseChannel):
                     is_group,
                 )
                 await self._send_text_via_frame(
-                    frame, error_msg or "Access denied."
+                    frame,
+                    error_msg or "Access denied.",
                 )
                 return
 
@@ -494,16 +493,19 @@ class WecomChannel(BaseChannel):
         if not self._client:
             return None
         try:
-            data, filename = await self._client.download_file(url, aes_key or None)
+            data, filename = await self._client.download_file(
+                url,
+                aes_key or None,
+            )
             fn = filename or filename_hint
             # Determine extension from hint if file has none
             hint_ext = Path(filename_hint).suffix
             if hint_ext and Path(fn).suffix in ("", ".bin", ".file"):
                 fn = (Path(fn).stem or "file") + hint_ext
             self._media_dir.mkdir(parents=True, exist_ok=True)
-            safe_name = "".join(
-                c for c in fn if c.isalnum() or c in "-_."
-            ) or "media"
+            safe_name = (
+                "".join(c for c in fn if c.isalnum() or c in "-_.") or "media"
+            )
             path = self._media_dir / f"wecom_{id(url)}_{safe_name}"
             path.write_bytes(data)
             return str(path)
@@ -516,7 +518,10 @@ class WecomChannel(BaseChannel):
     # ------------------------------------------------------------------
 
     async def _send_text_via_frame(
-        self, frame: Any, text: str, stream_id: str = ""
+        self,
+        frame: Any,
+        text: str,
+        stream_id: str = "",
     ) -> None:
         """Send a text reply using the SDK reply method (stream finish).
 
@@ -636,7 +641,9 @@ class WecomChannel(BaseChannel):
         #     pt = getattr(part, "type", None)
         #     if pt == ContentType.IMAGE and chatid:
         #         await self._send_image_via_send_message(chatid, part)
-        #     elif pt in (ContentType.FILE, ContentType.AUDIO, ContentType.VIDEO):
+        #     elif pt in (
+        #         ContentType.FILE, ContentType.AUDIO, ContentType.VIDEO
+        #     ):
         #         # Send file path/url as markdown link (WS channel limitation)
         #         file_url = (
         #             getattr(part, "file_url", "")
@@ -694,7 +701,10 @@ class WecomChannel(BaseChannel):
                     },
                 )
             except Exception:
-                logger.exception("wecom send proactive failed chatid=%s", chatid)
+                logger.exception(
+                    "wecom send proactive failed chatid=%s",
+                    chatid,
+                )
         else:
             logger.warning(
                 "wecom send: no frame/chatid for to_handle=%s",
@@ -731,7 +741,7 @@ class WecomChannel(BaseChannel):
                     task.cancel()
                 if pending:
                     ws_loop.run_until_complete(
-                        asyncio.gather(*pending, return_exceptions=True)
+                        asyncio.gather(*pending, return_exceptions=True),
                     )
                 ws_loop.run_until_complete(ws_loop.shutdown_asyncgens())
                 ws_loop.close()
@@ -746,7 +756,7 @@ class WecomChannel(BaseChannel):
         if not self.bot_id or not self.secret:
             raise RuntimeError(
                 "WECOM_BOT_ID and WECOM_SECRET are required when "
-                "the wecom channel is enabled."
+                "the wecom channel is enabled.",
             )
 
         self._loop = asyncio.get_running_loop()
