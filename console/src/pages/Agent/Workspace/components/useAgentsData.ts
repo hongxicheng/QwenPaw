@@ -19,8 +19,8 @@ export const useAgentsData = () => {
 
   useEffect(() => {
     const initializeData = async () => {
-      await fetchEnabledFiles();
-      await fetchFiles();
+      const enabled = await fetchEnabledFiles();
+      await fetchFiles(enabled);
     };
     initializeData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -29,7 +29,7 @@ export const useAgentsData = () => {
   // Re-sort when enabledFiles changes (for toggle/reorder operations)
   useEffect(() => {
     if (files.length > 0 && enabledFiles.length >= 0) {
-      const sortedFiles = sortFilesByEnabled(files);
+      const sortedFiles = sortFilesByEnabled(files, enabledFiles);
 
       // Only update if order actually changed to avoid infinite loop
       const orderChanged = sortedFiles.some(
@@ -44,17 +44,26 @@ export const useAgentsData = () => {
 
   const fetchEnabledFiles = async () => {
     try {
-      const enabled = await workspaceApi.getSystemPromptFiles();
+      const result = await workspaceApi.getSystemPromptFiles();
+      const enabled = Array.isArray(result) ? result : [];
       setEnabledFiles(enabled);
+      return enabled;
     } catch (error) {
       console.error("Failed to fetch enabled files", error);
+      return [];
     }
   };
 
-  const sortFilesByEnabled = (fileList: MarkdownFile[]) => {
+  const sortFilesByEnabled = (
+    fileList: MarkdownFile[],
+    currentEnabledFiles: string[],
+  ) => {
+    const safeEnabled = Array.isArray(currentEnabledFiles)
+      ? currentEnabledFiles
+      : [];
     return [...fileList].sort((a, b) => {
-      const aIndex = enabledFiles.indexOf(a.filename);
-      const bIndex = enabledFiles.indexOf(b.filename);
+      const aIndex = safeEnabled.indexOf(a.filename);
+      const bIndex = safeEnabled.indexOf(b.filename);
       const aEnabled = aIndex !== -1;
       const bEnabled = bIndex !== -1;
 
@@ -67,10 +76,17 @@ export const useAgentsData = () => {
     });
   };
 
-  const fetchFiles = async () => {
+  const fetchFiles = async (latestEnabledFiles?: string[]) => {
     try {
+      // Validate with Array.isArray: onClick handlers may pass a MouseEvent as the first argument
+      const enabled = Array.isArray(latestEnabledFiles)
+        ? latestEnabledFiles
+        : await fetchEnabledFiles();
       const fileList = await api.listFiles();
-      const sortedFiles = sortFilesByEnabled(fileList as MarkdownFile[]);
+      const sortedFiles = sortFilesByEnabled(
+        fileList as MarkdownFile[],
+        enabled,
+      );
       setFiles(sortedFiles);
       if (fileList.length > 0) {
         const path = fileList[0].path;
@@ -202,29 +218,10 @@ export const useAgentsData = () => {
     }
   };
 
-  const handleReorderFiles = async (
-    filename: string,
-    direction: "up" | "down",
-  ) => {
-    const currentIndex = enabledFiles.indexOf(filename);
-    if (currentIndex === -1) return;
-
-    const newEnabledFiles = [...enabledFiles];
-    const targetIndex =
-      direction === "up" ? currentIndex - 1 : currentIndex + 1;
-
-    if (targetIndex < 0 || targetIndex >= newEnabledFiles.length) return;
-
-    // Swap positions
-    [newEnabledFiles[currentIndex], newEnabledFiles[targetIndex]] = [
-      newEnabledFiles[targetIndex],
-      newEnabledFiles[currentIndex],
-    ];
-
+  const handleReorderFiles = async (newOrder: string[]) => {
     try {
-      await workspaceApi.setSystemPromptFiles(newEnabledFiles);
-      setEnabledFiles(newEnabledFiles);
-      message.success("File order updated");
+      await workspaceApi.setSystemPromptFiles(newOrder);
+      setEnabledFiles(newOrder);
     } catch (error) {
       console.error("Failed to reorder files", error);
       message.error("Failed to update file order");
