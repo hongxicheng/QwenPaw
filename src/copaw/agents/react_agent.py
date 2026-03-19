@@ -4,6 +4,7 @@
 This module provides the main CoPawAgent class built on ReActAgent,
 with integrated tools, skills, and memory management.
 """
+
 import asyncio
 import logging
 import os
@@ -168,7 +169,6 @@ class CoPawAgent(ToolGuardMixin, ReActAgent):
             memory=self.memory,
             memory_manager=self.memory_manager,
             enable_memory_manager=self._enable_memory_manager,
-            agent_config=agent_config,
         )
 
         # Register hooks
@@ -341,7 +341,6 @@ class CoPawAgent(ToolGuardMixin, ReActAgent):
         if self._enable_memory_manager and self.memory_manager is not None:
             memory_compact_hook = MemoryCompactionHook(
                 memory_manager=self.memory_manager,
-                agent_config=self._agent_config,
             )
             self.register_instance_hook(
                 hook_type="pre_reasoning",
@@ -531,11 +530,17 @@ class CoPawAgent(ToolGuardMixin, ReActAgent):
                 setattr(rebuilt_client, "_copaw_rebuild_info", rebuild_info)
                 return rebuilt_client
 
+            raw_headers = rebuild_info.get("headers") or {}
+            headers = (
+                {k: os.path.expandvars(v) for k, v in raw_headers.items()}
+                if raw_headers
+                else None
+            )
             rebuilt_client = HttpStatefulClient(
                 name=name,
                 transport=transport,
                 url=rebuild_info.get("url"),
-                headers=rebuild_info.get("headers"),
+                headers=headers,
             )
             setattr(rebuilt_client, "_copaw_rebuild_info", rebuild_info)
             return rebuilt_client
