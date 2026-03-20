@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # Download filename hint by type (e.g. voice -> .amr).
 FILENAME_HINT_BY_MAPPED = {
     "audio": "audio.amr",
-    "image": "image.png",
+    "image": "image.bin",
     "video": "video.mp4",
 }
 DEFAULT_FILENAME_HINT = "file.bin"
