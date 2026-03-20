@@ -345,7 +345,11 @@
     "xiaoyiSetupGuide": "请在华为开发者平台创建智能体并获取 AK/SK 和 Agent ID。AK/SK 可在凭证管理页面找到。",
     "filterAll": "全部",
     "builtin": "内置",
-    "custom": "自定义"
+    "custom": "自定义",
+    "feishuRegion": "地区",
+    "feishuRegionTooltip": "国内用户选择飞书，海外用户选择 Lark",
+    "feishuChina": "飞书（国内）",
+    "feishuInternational": "Lark（海外）"
   },
   "sessions": {
     "title": "会话",

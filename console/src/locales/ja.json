@@ -331,7 +331,11 @@
     "wecomSdkLoadFailed": "WeCom SDKの読み込みに失敗しました",
     "filterAll": "すべて",
     "builtin": "組み込み",
-    "custom": "カスタム"
+    "custom": "カスタム",
+    "feishuRegion": "地域",
+    "feishuRegionTooltip": "中国国内はFeishu、海外はLarkを選択",
+    "feishuChina": "Feishu（中国）",
+    "feishuInternational": "Lark（海外）"
   },
   "sessions": {
     "title": "セッション",

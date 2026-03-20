@@ -336,7 +336,11 @@
     "wecomSdkLoadFailed": "Не удалось загрузить WeCom SDK",
     "filterAll": "Все",
     "builtin": "Встроенные",
-    "custom": "Пользовательские"
+    "custom": "Пользовательские",
+    "feishuRegion": "Регион",
+    "feishuRegionTooltip": "Выберите Feishu для Китая или Lark для международного использования",
+    "feishuChina": "Feishu (Китай)",
+    "feishuInternational": "Lark (Международный)"
   },
   "sessions": {
     "title": "Сессии",
