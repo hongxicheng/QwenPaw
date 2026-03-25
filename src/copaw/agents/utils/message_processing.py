@@ -109,6 +109,9 @@ def _media_type_from_path(path: str) -> str:
 
 # Extensions accepted by the agentscope OpenAIChatFormatter
 _FORMATTER_SUPPORTED_AUDIO_EXTS = {".wav", ".mp3"}
+_AMR_EXTENSIONS = (".amr", ".amr-wb")
+_AMR_FFMPEG_PROBE_PARAMS = ["-analyzeduration", "200M", "-probesize", "200M"]
+_WAV_AUDIO_CODEC = "pcm_s16le"
 
 
 def _convert_audio_to_wav(src_path: str) -> Optional[str]:
@@ -145,9 +148,7 @@ def _convert_audio_to_wav(src_path: str) -> Optional[str]:
     # encapsulation; increase analyzeduration and probesize so ffmpeg
     # can correctly detect the codec before decoding.
     amr_extra: list = (
-        ["-analyzeduration", "200M", "-probesize", "200M"]
-        if ext in (".amr", ".amr-wb")
-        else []
+        _AMR_FFMPEG_PROBE_PARAMS if ext in _AMR_EXTENSIONS else []
     )
 
     try:
@@ -161,7 +162,7 @@ def _convert_audio_to_wav(src_path: str) -> Optional[str]:
                 "-i",
                 src_path,
                 "-acodec",
-                "pcm_s16le",
+                _WAV_AUDIO_CODEC,
                 "-ar",
                 "16000",
                 "-ac",
