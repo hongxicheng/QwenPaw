@@ -146,6 +146,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Serialise multi-instance WebSocket start-up: lark_oapi.ws.client.loop is a
+# module-level variable that concurrent start() calls would overwrite.
+_WS_START_LOCK: threading.Lock = threading.Lock()
+
 
 class FeishuChannel(BaseChannel):
     """Feishu/Lark channel: WebSocket receive, Open API send.
@@ -523,6 +527,20 @@ class FeishuChannel(BaseChannel):
     def _on_message_sync(self, data: "P2ImMessageReceiveV1") -> None:
         """Sync handler (called from WebSocket thread)."""
         if self._closed:
+            return
+        # Guard against cross-instance dispatch: lark_oapi ws.Client uses a
+        # module-level event loop variable that can be overwritten by another
+        # FeishuChannel instance in the same process.  Verify the event's
+        # app_id matches this instance before dispatching to avoid handling
+        # messages intended for a different workspace.
+        header = getattr(data, "header", None)
+        event_app_id = getattr(header, "app_id", None) if header else None
+        if event_app_id and event_app_id != self.app_id:
+            logger.debug(
+                "feishu: drop misrouted event app_id=%s (expected %s)",
+                event_app_id,
+                self.app_id,
+            )
             return
         if not self._loop:
             logger.warning("feishu: main loop not set, drop message")
@@ -1746,14 +1764,34 @@ class FeishuChannel(BaseChannel):
         self._ws_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._ws_loop)
         old_ws_client_loop = None
+        _ws_mod: types.ModuleType = types.ModuleType("_ws_mod_placeholder")
+        _orig_select = None
+        # Hold the lock until _connect() finishes so concurrent instances
+        # don't overwrite each other's ws_client.loop.
+        _WS_START_LOCK.acquire()  # pylint: disable=consider-using-with
+        lock_released = False
         try:
-            import lark_oapi.ws.client as ws_client
+            import lark_oapi.ws.client as _lark_ws_mod
 
+            _ws_mod = _lark_ws_mod
             # Save old loop value to restore later (for multi-instance)
-            old_ws_client_loop = getattr(ws_client, "loop", None)
-            ws_client.loop = self._ws_loop
+            old_ws_client_loop = getattr(_ws_mod, "loop", None)
+            _ws_mod.loop = self._ws_loop
+
+            # Patch _select to release the lock once _connect() is done.
+            _orig_select = _ws_mod._select
         except ImportError:
             pass
+
+        async def _patched_select() -> None:
+            nonlocal lock_released
+            if not lock_released:
+                _WS_START_LOCK.release()
+                lock_released = True
+            if _orig_select is not None:
+                await _orig_select()
+
+        _ws_mod._select = _patched_select
         try:
             if self._ws_client:
                 logger.info("feishu WebSocket connecting (long connection)...")
@@ -1768,6 +1806,17 @@ class FeishuChannel(BaseChannel):
         except Exception:
             logger.exception("feishu WebSocket thread failed")
         finally:
+            # Fallback: release the lock if start() raised before _select().
+            if not lock_released:
+                try:
+                    _WS_START_LOCK.release()
+                except RuntimeError:
+                    pass
+            # Restore _select to avoid permanently patching the module.
+            try:
+                _ws_mod._select = _orig_select
+            except Exception:
+                pass
             # Graceful cleanup: disconnect, cancel tasks, close loop
             if self._ws_loop and not self._ws_loop.is_closed():
                 try:
@@ -1806,17 +1855,10 @@ class FeishuChannel(BaseChannel):
                     logger.debug("feishu ws cleanup failed", exc_info=True)
 
             # Restore ws_client.loop to avoid affecting other instances.
-            # ws_client.loop is a module-level global variable shared
-            # across all FeishuChannel instances. We must restore it to
-            # the previous value (or None if it was our loop) to avoid
-            # breaking other running instances or new instances during
-            # reload.
             try:
-                import lark_oapi.ws.client as ws_client
-
                 # Only restore if current loop is still ours
-                if getattr(ws_client, "loop", None) is self._ws_loop:
-                    ws_client.loop = old_ws_client_loop
+                if _ws_mod and getattr(_ws_mod, "loop", None) is self._ws_loop:
+                    _ws_mod.loop = old_ws_client_loop
             except Exception:
                 pass
 
