@@ -1822,13 +1822,17 @@ class FeishuChannel(BaseChannel):
                         _WS_START_LOCK.release()
                         lock_released = True
                         connection_started = True
-                    # Monitor connection health: if SDK's internal reconnect
-                    # gives up (conn is None and no active reconnect task),
-                    # stop the loop so the outer while triggers a fresh start.
+                    if _orig_select is not None:
+                        await _orig_select()
+
+                async def _monitor_connection_health() -> None:
+                    """Force reconnect if SDK's internal reconnect gives up."""
                     while not self._stop_event.is_set() and not self._closed:
                         await asyncio.sleep(30)
                         if self._stop_event.is_set() or self._closed:
                             break
+                        if not connection_started:
+                            continue
                         ws = self._ws_client
                         if (
                             ws is not None
@@ -1838,12 +1842,16 @@ class FeishuChannel(BaseChannel):
                                 "feishu WebSocket conn lost, "
                                 "forcing reconnect...",
                             )
-                            self._ws_loop.stop()
+                            if self._ws_loop and not self._ws_loop.is_closed():
+                                self._ws_loop.stop()
                             break
 
                 _ws_mod._select = _patched_select
                 try:
                     if self._ws_client and not self._stop_event.is_set():
+                        self._ws_loop.create_task(
+                            _monitor_connection_health(),
+                        )
                         logger.info(
                             "feishu WebSocket connecting (long connection)...",
                         )
@@ -1879,7 +1887,7 @@ class FeishuChannel(BaseChannel):
                 except Exception:
                     if self._stop_event.is_set() or self._closed:
                         logger.debug(
-                            "feishu WebSocket stopped during reconnect"
+                            "feishu WebSocket stopped during reconnect",
                         )
                     else:
                         logger.exception(
