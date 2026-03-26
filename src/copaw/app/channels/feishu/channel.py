@@ -1869,25 +1869,22 @@ class FeishuChannel(BaseChannel):
                         # Otherwise, treat as disconnection and reconnect
                         logger.info(
                             "feishu WebSocket event loop stopped, "
-                            "reconnecting in %.1fs...",
-                            retry_delay,
+                            "will attempt to reconnect",
                         )
                     else:
                         logger.exception(
                             "feishu WebSocket thread failed, "
-                            "reconnecting in %.1fs...",
-                            retry_delay,
+                            "will attempt to reconnect",
                         )
                 except Exception:
                     if self._stop_event.is_set() or self._closed:
                         logger.debug(
-                            "feishu WebSocket stopped during reconnect",
+                            "feishu WebSocket stopped during reconnect"
                         )
                     else:
                         logger.exception(
                             "feishu WebSocket thread failed, "
-                            "reconnecting in %.1fs...",
-                            retry_delay,
+                            "will attempt to reconnect",
                         )
             finally:
                 # Ensure lock is released (covers KeyboardInterrupt).
