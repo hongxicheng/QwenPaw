@@ -554,7 +554,7 @@ class FeishuChannel(BaseChannel):
         create_time = getattr(header, "create_time", None)
         if create_time:
             now_ms = int(time.time() * 1000)
-            age_ms = now_ms - create_time
+            age_ms = now_ms - int(create_time)
             if age_ms > FEISHU_STALE_MSG_THRESHOLD_MS:
                 logger.debug(
                     "feishu: drop stale message age=%.1fs (retry)",
