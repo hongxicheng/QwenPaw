@@ -1019,7 +1019,8 @@ class WecomChannel(BaseChannel):
                         await ws_mgr._ws.close()
                     except Exception as e:
                         ws_mgr._logger.warning(
-                            "Failed to close websocket on heartbeat failure: %s", e
+                            "Failed to close ws on heartbeat failure: %s",
+                            e,
                         )
                 # Fix: trigger reconnect instead of silent return
                 await ws_mgr._schedule_reconnect()
