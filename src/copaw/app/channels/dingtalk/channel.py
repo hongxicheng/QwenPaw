@@ -95,6 +95,14 @@ class DingTalkChannel(BaseChannel):
 
     channel = "dingtalk"
 
+    # Keys to exclude when creating serializable channel_meta
+    _NON_SERIALIZABLE_META_KEYS = (
+        "incoming_message",
+        "reply_future",
+        "reply_loop",
+        "_reply_futures_list",
+    )
+
     def __init__(
         self,
         process: ProcessHandler,
@@ -297,7 +305,7 @@ class DingTalkChannel(BaseChannel):
         serializable_meta = {
             k: v
             for k, v in meta.items()
-            if k not in ("incoming_message", "reply_future", "reply_loop")
+            if k not in self._NON_SERIALIZABLE_META_KEYS
         }
         setattr(request, "channel_meta", serializable_meta)
         return request
@@ -307,7 +315,7 @@ class DingTalkChannel(BaseChannel):
         # use the same session_id to look up stored sessionWebhook.
         return f"dingtalk:sw:{session_id}"
 
-    async def _before_consume_process(self, request: Any) -> None:
+    async def _before_consume_process(self, request: "AgentRequest") -> None:
         """Save session_webhook from meta for cron/proactive send."""
         meta = getattr(request, "channel_meta", None) or {}
         session_webhook = self._get_session_webhook(meta)
@@ -1661,16 +1669,10 @@ class DingTalkChannel(BaseChannel):
         )
         # Keep only JSON-serializable keys on request for tracing; pass full
         # send_meta as reply_meta for _reply_sync_batch / send_content_parts.
-        _NON_SERIALIZABLE = (
-            "incoming_message",
-            "reply_loop",
-            "reply_future",
-            "_reply_futures_list",
-        )
         safe_meta = {
             k: v
             for k, v in (send_meta or {}).items()
-            if k not in _NON_SERIALIZABLE
+            if k not in self._NON_SERIALIZABLE_META_KEYS
         }
         request.channel_meta = safe_meta
         logger.info(
