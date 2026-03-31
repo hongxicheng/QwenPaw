@@ -1012,19 +1012,8 @@ class WecomChannel(BaseChannel):
         self._client.on("message", self._on_message_sync)
         self._client.on("event.enter_chat", self._on_enter_chat_sync)
 
-        # Patch SDK heartbeat to trigger reconnect on connection death.
-        #
-        # SDK bug: when _missed_pong_count >= _max_missed_pong,
-        # _send_heartbeat stops the heartbeat timer and closes the WS
-        # but returns *without* calling _schedule_reconnect().
-        # On a dead network the receive loop never gets a
-        # ConnectionClosed event, so the bot stays permanently offline.
-        #
-        # The fix uses asyncio.ensure_future to schedule reconnect in a
-        # *separate* task.  This is critical because _stop_heartbeat()
-        # cancels the heartbeat task (which is our own caller), so any
-        # code after _stop_heartbeat() in the same coroutine would
-        # never execute.
+        # Patch SDK heartbeat to trigger reconnect on pong timeout.
+        # Use ensure_future so reconnect survives heartbeat task cancel.
         ws_mgr = self._client._ws_manager
         _original_send_heartbeat = ws_mgr._send_heartbeat
 
