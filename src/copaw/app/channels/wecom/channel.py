@@ -1012,6 +1012,70 @@ class WecomChannel(BaseChannel):
         self._client.on("message", self._on_message_sync)
         self._client.on("event.enter_chat", self._on_enter_chat_sync)
 
+        # Patch SDK heartbeat to trigger reconnect on connection death.
+        #
+        # SDK bug: when _missed_pong_count >= _max_missed_pong,
+        # _send_heartbeat stops the heartbeat timer and closes the WS
+        # but returns *without* calling _schedule_reconnect().
+        # On a dead network the receive loop never gets a
+        # ConnectionClosed event, so the bot stays permanently offline.
+        #
+        # The fix uses asyncio.ensure_future to schedule reconnect in a
+        # *separate* task.  This is critical because _stop_heartbeat()
+        # cancels the heartbeat task (which is our own caller), so any
+        # code after _stop_heartbeat() in the same coroutine would
+        # never execute.
+        ws_mgr = self._client._ws_manager
+        _original_send_heartbeat = ws_mgr._send_heartbeat
+
+        async def _patched_send_heartbeat() -> None:
+            if ws_mgr._missed_pong_count >= ws_mgr._max_missed_pong:
+                logger.warning(
+                    "wecom heartbeat: no pong for %d pings, "
+                    "triggering reconnect",
+                    ws_mgr._missed_pong_count,
+                )
+                ws_mgr._stop_heartbeat()
+                if ws_mgr._ws:
+                    try:
+                        await ws_mgr._ws.close()
+                    except Exception as close_err:
+                        logger.warning(
+                            "wecom heartbeat: failed to close ws: %s",
+                            close_err,
+                        )
+                # Schedule reconnect in a separate task so it survives
+                # the heartbeat task cancellation above.
+                asyncio.ensure_future(ws_mgr._schedule_reconnect())
+                return
+            # Normal path: delegate to original SDK implementation.
+            await _original_send_heartbeat()
+
+        ws_mgr._send_heartbeat = _patched_send_heartbeat
+
+        # Log reconnect events for observability.
+        self._client.on(
+            "disconnected",
+            lambda reason: logger.info(
+                "wecom disconnected: %s",
+                reason,
+            ),
+        )
+        self._client.on(
+            "reconnecting",
+            lambda attempt: logger.info(
+                "wecom reconnecting: attempt %d",
+                attempt,
+            ),
+        )
+        self._client.on(
+            "error",
+            lambda error: logger.error(
+                "wecom error: %s",
+                error,
+            ),
+        )
+
         self._ws_thread = threading.Thread(
             target=self._run_ws_forever,
             daemon=True,
