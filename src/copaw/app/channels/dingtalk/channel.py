@@ -1724,10 +1724,19 @@ class DingTalkChannel(BaseChannel):
         if bot_prefix and "bot_prefix" not in send_meta:
             send_meta = {**send_meta, "bot_prefix": bot_prefix}
 
-        to_handle = self.get_to_handle_from_request(request)
+        # Resolve handle consistently using session-aware logic
+        sender_id = getattr(request, "user_id", "") or ""
+        sid = getattr(request, "session_id", "") or ""
+        to_handle = (
+            self.to_handle_from_target(
+                user_id=sender_id,
+                session_id=sid,
+            )
+            if sid
+            else sender_id
+        )
 
         # Allowlist / mention checks (same as _run_process_loop)
-        sender_id = getattr(request, "user_id", "") or ""
         is_group = bool(send_meta.get("is_group", False))
         allowed, error_msg = self._check_allowlist(sender_id, is_group)
         if not allowed:
@@ -1931,17 +1940,8 @@ class DingTalkChannel(BaseChannel):
                     SENT_VIA_WEBHOOK,
                 )
             elif accumulated_parts:
-                sid = getattr(request, "session_id", "") or ""
-                resolved_handle = (
-                    self.to_handle_from_target(
-                        user_id=request.user_id or "",
-                        session_id=sid,
-                    )
-                    if sid
-                    else (request.user_id or "")
-                )
                 await self.send_content_parts(
-                    resolved_handle,
+                    to_handle,
                     accumulated_parts,
                     send_meta,
                 )
@@ -1973,14 +1973,15 @@ class DingTalkChannel(BaseChannel):
                 "dingtalk _stream_with_tracker failed: %s",
                 exc,
             )
+            err_detail = str(exc).strip() or "Internal error"
             await self._on_consume_error(
                 request,
                 to_handle,
-                "Internal error",
+                err_detail,
             )
             self._reply_sync_batch(
                 send_meta,
-                bot_prefix + "Internal error",
+                bot_prefix + err_detail,
             )
             raise
 
