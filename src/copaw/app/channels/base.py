@@ -720,21 +720,16 @@ class BaseChannel(ABC):
     def _debounce_payload(self, payload: Any) -> bool:
         """Apply no-text debounce on payload; return False if buffered."""
         if isinstance(payload, dict):
-            session_id = payload.get("session_id") or self.get_debounce_key(
-                payload,
-            )
             content_parts = payload.get("content_parts") or []
         elif hasattr(payload, "input") and payload.input:
-            session_id = getattr(payload, "session_id", "") or ""
-            content_parts = list(
-                getattr(payload.input[0], "content", None) or [],
-            )
+            content_parts = getattr(payload.input[0], "content", None) or []
         else:
             return True
 
         if not content_parts:
             return True
 
+        session_id = self.get_debounce_key(payload)
         should_process, merged = self._apply_no_text_debounce(
             session_id,
             content_parts,
@@ -743,17 +738,16 @@ class BaseChannel(ABC):
             return False
 
         # Write merged parts back so downstream paths see full content.
-        if merged:
-            if isinstance(payload, dict):
-                payload["content_parts"] = merged
-            elif hasattr(payload, "input") and payload.input:
-                first = payload.input[0]
-                if hasattr(first, "model_copy"):
-                    payload.input[0] = first.model_copy(
-                        update={"content": merged},
-                    )
-                elif hasattr(first, "content"):
-                    first.content = merged
+        if isinstance(payload, dict):
+            payload["content_parts"] = merged
+        elif hasattr(payload, "input") and payload.input:
+            first = payload.input[0]
+            if hasattr(first, "model_copy"):
+                payload.input[0] = first.model_copy(
+                    update={"content": merged},
+                )
+            elif hasattr(first, "content"):
+                first.content = merged
         return True
 
     async def _consume_one_request(self, payload: Any) -> None:
