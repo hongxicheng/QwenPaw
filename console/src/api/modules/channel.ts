@@ -37,4 +37,14 @@ export const channelApi = {
         qrcode,
       )}`,
     ),
+
+  getWecomQrcode: () =>
+    request<{ qrcode_img: string; scode: string }>(
+      "/config/channels/wecom/qrcode",
+    ),
+
+  getWecomQrcodeStatus: (scode: string) =>
+    request<{ status: string; bot_id: string; secret: string }>(
+      `/config/channels/wecom/qrcode/status?scode=${encodeURIComponent(scode)}`,
+    ),
 };

@@ -245,6 +245,132 @@ async def get_weixin_qrcode_status(
     }
 
 
+# ── WeCom (Enterprise WeChat) QR code endpoints ────────────────────────────
+
+_WECOM_AUTH_ORIGIN = "https://work.weixin.qq.com"
+_WECOM_SOURCE = "copaw"
+
+
+@router.get(
+    "/channels/wecom/qrcode",
+    summary="Get WeCom bot authorization QR code",
+    description=(
+        "Fetch the WeCom authorization page, extract scode and auth_url, "
+        "then generate a QR code image (base64 PNG)."
+    ),
+)
+async def get_wecom_qrcode() -> dict:
+    """Return a QR code image (base64 PNG) for WeCom bot authorization."""
+    import base64
+    import io
+    import re
+    import httpx
+
+    state = f"state_{int(__import__('time').time() * 1000)}"
+    gen_url = (
+        f"{_WECOM_AUTH_ORIGIN}/ai/qc/gen"
+        f"?source={_WECOM_SOURCE}&state={state}"
+        f"&timestamp={int(__import__('time').time() * 1000)}"
+    )
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=15,
+            follow_redirects=True,
+        ) as client:
+            resp = await client.get(gen_url)
+            resp.raise_for_status()
+            html = resp.text
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"WeCom auth page fetch failed: {exc}",
+        ) from exc
+
+    # Extract scode and auth_url from window.settings in the HTML
+    settings_match = re.search(
+        r"window\.settings\s*=\s*(\{.*?\})",
+        html,
+        re.DOTALL,
+    )
+    if not settings_match:
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to parse WeCom auth page settings",
+        )
+
+    import json
+
+    try:
+        settings = json.loads(settings_match.group(1))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to parse WeCom settings JSON: {exc}",
+        ) from exc
+
+    scode = settings.get("scode", "")
+    auth_url = settings.get("auth_url", "")
+
+    if not scode or not auth_url:
+        raise HTTPException(
+            status_code=502,
+            detail="WeCom returned empty scode or auth_url",
+        )
+
+    # Generate QR code image from auth_url using segno
+    try:
+        qr = segno.make(auth_url, error="M")
+        buf = io.BytesIO()
+        qr.save(buf, kind="png", scale=6, border=2)
+        qrcode_img_b64 = base64.b64encode(buf.getvalue()).decode()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"QR code image generation failed: {exc}",
+        ) from exc
+
+    return {"qrcode_img": qrcode_img_b64, "scode": scode}
+
+
+@router.get(
+    "/channels/wecom/qrcode/status",
+    summary="Poll WeCom QR code authorization status",
+)
+async def get_wecom_qrcode_status(scode: str) -> dict:
+    """Poll WeCom authorization status. Returns {status, bot_id, secret}."""
+    import httpx
+
+    query_url = (
+        f"{_WECOM_AUTH_ORIGIN}/ai/qc/query_result"
+        f"?scode={__import__('urllib.parse', fromlist=['quote']).quote(scode)}"
+    )
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=10,
+            follow_redirects=True,
+        ) as client:
+            resp = await client.get(query_url)
+            resp.raise_for_status()
+            result = resp.json()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"WeCom status check failed: {exc}",
+        ) from exc
+
+    data = result.get("data", {})
+    status = data.get("status", "waiting")
+    bot_info = data.get("bot_info", {})
+
+    return {
+        "status": status,
+        "bot_id": bot_info.get("botid", ""),
+        "secret": bot_info.get("secret", ""),
+    }
+
+
 @router.get(
     "/channels/{channel_name}",
     response_model=ChannelConfigUnion,

@@ -18,34 +18,6 @@ import styles from "../index.module.less";
 import { useTheme } from "../../../../contexts/ThemeContext";
 import { api } from "../../../../api";
 
-const WECOM_SDK_URL =
-  "https://wwcdn.weixin.qq.com/node/wework/js/wecom-aibot-sdk@0.1.0.min.js";
-
-const WECOM_SOURCE = "copaw";
-
-interface WecomBotInfo {
-  botid: string;
-  secret: string;
-}
-
-interface WecomAuthError {
-  code: string;
-  message: string;
-  details?: unknown;
-}
-
-declare global {
-  interface Window {
-    WecomAIBotSDK?: {
-      openBotInfoAuthWindow: (options: {
-        source: string;
-        onCreated?: (bot: WecomBotInfo) => void;
-        onError?: (error: WecomAuthError) => void;
-      }) => Promise<WecomBotInfo> | void;
-    };
-  }
-}
-
 const CHANNELS_WITH_ACCESS_CONTROL: ChannelKey[] = [
   "telegram",
   "dingtalk",
@@ -132,7 +104,6 @@ export function ChannelDrawer({
   const { isDark } = useTheme();
   const currentLang = i18n.language?.startsWith("zh") ? "zh" : "en";
   const label = activeKey ? getChannelLabel(activeKey, t) : activeLabel;
-  const sdkLoadedRef = useRef(false);
   const { message } = useAppMessage();
 
   // WeChat QR code state
@@ -187,64 +158,53 @@ export function ChannelDrawer({
     }
   }, [t, form, stopWeixinPoll]);
 
-  // Dynamically load the WeCom SDK script
-  const loadWecomSDK = useCallback((): Promise<void> => {
-    return new Promise((resolve, reject) => {
-      if (window.WecomAIBotSDK || sdkLoadedRef.current) {
-        resolve();
-        return;
-      }
-      const script = document.createElement("script");
-      script.src = WECOM_SDK_URL;
-      script.async = true;
-      script.onload = () => {
-        sdkLoadedRef.current = true;
-        resolve();
-      };
-      script.onerror = () => reject(new Error("Failed to load WeCom SDK"));
-      document.body.appendChild(script);
-    });
+  // WeCom QR code state
+  const [wecomQrcodeImg, setWecomQrcodeImg] = useState<string>("");
+  const [wecomQrcodeLoading, setWecomQrcodeLoading] = useState(false);
+  const wecomPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const wecomConfirmedRef = useRef(false);
+
+  const stopWecomPoll = useCallback(() => {
+    if (wecomPollRef.current) {
+      clearInterval(wecomPollRef.current);
+      wecomPollRef.current = null;
+    }
   }, []);
 
-  // Handle WeCom scan-to-authorize button click; source is fixed to WECOM_SOURCE
-  const handleWecomAuth = useCallback(async () => {
+  const handleFetchWecomQrcode = useCallback(async () => {
+    stopWecomPoll();
+    setWecomQrcodeLoading(true);
+    setWecomQrcodeImg("");
+    wecomConfirmedRef.current = false;
     try {
-      await loadWecomSDK();
+      const data = await api.getWecomQrcode();
+      if (data.qrcode_img) {
+        setWecomQrcodeImg(data.qrcode_img);
+        // Start polling for authorization confirmation
+        wecomPollRef.current = setInterval(async () => {
+          try {
+            const s = await api.getWecomQrcodeStatus(data.scode);
+            if (s.status === "success" && s.bot_id) {
+              if (wecomConfirmedRef.current) return;
+              wecomConfirmedRef.current = true;
+              stopWecomPoll();
+              form.setFieldsValue({ bot_id: s.bot_id, secret: s.secret });
+              setWecomQrcodeImg("");
+              message.success(t("channels.wecomAuthSuccess"));
+            }
+          } catch {
+            // ignore poll errors
+          }
+        }, 3000);
+      } else {
+        message.error(t("channels.wecomQrcodeFailed"));
+      }
     } catch {
-      message.error(t("channels.wecomSdkLoadFailed"));
-      return;
+      message.error(t("channels.wecomQrcodeFailed"));
+    } finally {
+      setWecomQrcodeLoading(false);
     }
-    if (!window.WecomAIBotSDK) {
-      message.error(t("channels.wecomSdkLoadFailed"));
-      return;
-    }
-    const result = window.WecomAIBotSDK.openBotInfoAuthWindow({
-      source: WECOM_SOURCE,
-    });
-    if (result && typeof result.then === "function") {
-      result.then(
-        (bot) => {
-          if (bot?.botid) {
-            form.setFieldsValue({ bot_id: bot.botid, secret: bot.secret });
-            message.success(t("channels.wecomAuthSuccess"));
-          }
-        },
-        (error: WecomAuthError) => {
-          if (error?.code === "WINDOW_BLOCKED") {
-            message.error(t("channels.wecomWindowBlocked"));
-          } else if (error?.code === "CANCELLED") {
-            message.info(t("channels.wecomCancelled"));
-          } else {
-            message.error(
-              t("channels.wecomAuthFailed", {
-                msg: error?.message || error?.code || "Unknown error",
-              }),
-            );
-          }
-        },
-      );
-    }
-  }, [loadWecomSDK, form, t]);
+  }, [t, form, stopWecomPoll, message]);
 
   // ── Access control fields (shared across multiple channels) ──────────────
 
@@ -739,20 +699,40 @@ export function ChannelDrawer({
       case "wecom":
         return (
           <>
-            <Form.Item label=" " colon={false}>
-              <span
-                style={{
-                  display: "block",
-                  marginBottom: 8,
-                  fontSize: 13,
-                  color: isDark ? "rgba(255,255,255,0.65)" : "rgba(0,0,0,0.45)",
-                }}
+            <Form.Item label={t("channels.wecomScanAuth")}>
+              <Button
+                type="primary"
+                block
+                loading={wecomQrcodeLoading}
+                onClick={handleFetchWecomQrcode}
               >
-                {t("channels.wecomAuthHint")}
-              </span>
-              <Button type="primary" block onClick={handleWecomAuth}>
                 {t("channels.loginWeCom")}
               </Button>
+              {wecomQrcodeLoading && (
+                <div style={{ textAlign: "center", marginTop: 12 }}>
+                  <Spin />
+                </div>
+              )}
+              {wecomQrcodeImg && !wecomQrcodeLoading && (
+                <div style={{ textAlign: "center", marginTop: 12 }}>
+                  <img
+                    src={`data:image/png;base64,${wecomQrcodeImg}`}
+                    alt="WeCom QR Code"
+                    style={{ width: 200, height: 200 }}
+                  />
+                  <div
+                    style={{
+                      marginTop: 8,
+                      fontSize: 12,
+                      color: isDark
+                        ? "rgba(255,255,255,0.45)"
+                        : "rgba(0,0,0,0.45)",
+                    }}
+                  >
+                    {t("channels.wecomAuthHint")}
+                  </div>
+                </div>
+              )}
             </Form.Item>
             <Form.Item
               name="bot_id"
