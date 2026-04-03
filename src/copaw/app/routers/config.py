@@ -37,7 +37,10 @@ from ...config.config import (
 )
 
 from .schemas_config import HeartbeatBody
-from ..channels.qrcode_provider import QRCODE_PROVIDERS, generate_qrcode_image
+from ..channels.qrcode_auth_handler import (
+    QRCODE_AUTH_HANDLERS,
+    generate_qrcode_image,
+)
 
 router = APIRouter(prefix="/config", tags=["config"])
 
@@ -145,19 +148,19 @@ async def put_channels(
     summary="Get channel authorization QR code",
     description=(
         "Fetch a QR code image (base64 PNG) for the given channel. "
-        "Supported channels: " + ", ".join(QRCODE_PROVIDERS.keys())
+        "Supported channels: " + ", ".join(QRCODE_AUTH_HANDLERS.keys())
     ),
 )
 async def get_channel_qrcode(request: Request, channel: str) -> dict:
     """Return {qrcode_img, poll_token} for the requested channel."""
-    provider = QRCODE_PROVIDERS.get(channel)
-    if provider is None:
+    handler = QRCODE_AUTH_HANDLERS.get(channel)
+    if handler is None:
         raise HTTPException(
             status_code=404,
             detail=f"QR code not supported for channel: {channel}",
         )
 
-    result = await provider.fetch_qrcode(request)
+    result = await handler.fetch_qrcode(request)
     qrcode_img = generate_qrcode_image(result.scan_url)
     return {"qrcode_img": qrcode_img, "poll_token": result.poll_token}
 
@@ -172,14 +175,14 @@ async def get_channel_qrcode_status(
     token: str,
 ) -> dict:
     """Return {status, credentials} for the requested channel."""
-    provider = QRCODE_PROVIDERS.get(channel)
-    if provider is None:
+    handler = QRCODE_AUTH_HANDLERS.get(channel)
+    if handler is None:
         raise HTTPException(
             status_code=404,
             detail=f"QR code not supported for channel: {channel}",
         )
 
-    result = await provider.poll_status(token, request)
+    result = await handler.poll_status(token, request)
     return {"status": result.status, "credentials": result.credentials}
 
 

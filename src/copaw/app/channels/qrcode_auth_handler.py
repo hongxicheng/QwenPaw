@@ -1,19 +1,19 @@
 # -*- coding: utf-8 -*-
-"""Unified QR code provider for channel authorization.
+"""Unified QR code authorization handlers for channels.
 
 Each channel that supports QR-code-based login/authorization implements a
-concrete ``QRCodeProvider`` and registers it in ``QRCODE_PROVIDERS``.
+concrete ``QRCodeAuthHandler`` and registers it in ``QRCODE_AUTH_HANDLERS``.
 The router in *config.py* exposes two generic endpoints that delegate to
-the appropriate provider based on the ``{channel}`` path parameter.
+the appropriate handler based on the ``{channel}`` path parameter.
 
 Typical flow
 ------------
 1. ``GET /config/channels/{channel}/qrcode``
-   → calls ``provider.fetch_qrcode(request)``
+   → calls ``handler.fetch_qrcode(request)``
    → returns ``{"qrcode_img": "<base64 PNG>", "poll_token": "..."}``
 
 2. ``GET /config/channels/{channel}/qrcode/status?token=...``
-   → calls ``provider.poll_status(token, request)``
+   → calls ``handler.poll_status(token, request)``
    → returns ``{"status": "...", "credentials": {...}}``
 """
 
@@ -45,7 +45,7 @@ class PollResult:
     credentials: Dict[str, Any]
 
 
-class QRCodeProvider(ABC):
+class QRCodeAuthHandler(ABC):
     """Abstract base class for channel QR code authorization."""
 
     @abstractmethod
@@ -70,15 +70,12 @@ def generate_qrcode_image(scan_url: str) -> str:
             detail=f"QR code image generation failed: {exc}",
         ) from exc
 
-
 # ---------------------------------------------------------------------------
-# WeChat (iLink) provider
+# WeChat (iLink) handler
 # ---------------------------------------------------------------------------
 
-
-class WeixinQRCodeProvider(QRCodeProvider):
-    """QR code provider for WeChat iLink Bot login."""
-
+class WeixinQRCodeAuthHandler(QRCodeAuthHandler):
+    """QR code auth handler for WeChat iLink Bot login."""
     async def _get_base_url(self, request: Request) -> str:
         from ..channels.weixin.client import _DEFAULT_BASE_URL
 
@@ -161,15 +158,14 @@ class WeixinQRCodeProvider(QRCodeProvider):
 
 
 # ---------------------------------------------------------------------------
-# WeCom (Enterprise WeChat) provider
+# WeCom (Enterprise WeChat) handler
 # ---------------------------------------------------------------------------
 
 _WECOM_AUTH_ORIGIN = "https://work.weixin.qq.com"
 _WECOM_SOURCE = "copaw"
 
-
-class WecomQRCodeProvider(QRCodeProvider):
-    """QR code provider for WeCom bot authorization."""
+class WecomQRCodeAuthHandler(QRCodeAuthHandler):
+    """QR code auth handler for WeCom bot authorization."""
 
     async def fetch_qrcode(self, request: Request) -> QRCodeResult:
         import json
@@ -187,8 +183,7 @@ class WecomQRCodeProvider(QRCodeProvider):
 
         try:
             async with httpx.AsyncClient(
-                timeout=15,
-                follow_redirects=True,
+                timeout=15, follow_redirects=True,
             ) as client:
                 resp = await client.get(gen_url)
                 resp.raise_for_status()
@@ -200,9 +195,7 @@ class WecomQRCodeProvider(QRCodeProvider):
             ) from exc
 
         settings_match = re.search(
-            r"window\.settings\s*=\s*(\{.*\})",
-            html,
-            re.DOTALL,
+            r"window\.settings\s*=\s*(\{.*\})", html, re.DOTALL,
         )
         if not settings_match:
             raise HTTPException(
@@ -234,7 +227,8 @@ class WecomQRCodeProvider(QRCodeProvider):
         import httpx
 
         query_url = (
-            f"{_WECOM_AUTH_ORIGIN}/ai/qc/query_result" f"?scode={quote(token)}"
+            f"{_WECOM_AUTH_ORIGIN}/ai/qc/query_result"
+            f"?scode={quote(token)}"
         )
 
         try:
@@ -259,12 +253,11 @@ class WecomQRCodeProvider(QRCodeProvider):
             },
         )
 
-
 # ---------------------------------------------------------------------------
-# Provider registry – add new channels here
+# Handler registry – add new channels here
 # ---------------------------------------------------------------------------
 
-QRCODE_PROVIDERS: Dict[str, QRCodeProvider] = {
-    "weixin": WeixinQRCodeProvider(),
-    "wecom": WecomQRCodeProvider(),
+QRCODE_AUTH_HANDLERS: Dict[str, QRCodeAuthHandler] = {
+    "weixin": WeixinQRCodeAuthHandler(),
+    "wecom": WecomQRCodeAuthHandler(),
 }

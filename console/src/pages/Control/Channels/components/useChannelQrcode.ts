@@ -30,7 +30,7 @@ interface ChannelQrcodeState {
  * Generic hook for channel QR-code-based authorization.
  *
  * Handles: fetch QR code → display → poll status → auto-fill credentials.
- * Works for any channel registered in the backend `QRCODE_PROVIDERS`.
+ * Works for any channel registered in the backend `QRCODE_AUTH_HANDLERS`.
  */
 export function useChannelQrcode(
   config: ChannelQrcodeConfig,
