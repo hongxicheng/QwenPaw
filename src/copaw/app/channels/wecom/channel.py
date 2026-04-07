@@ -65,6 +65,25 @@ _MEDIA_MSGTYPE: Dict[str, str] = {
     "file": "file",
 }
 
+# Mapping for quoted media types: msgtype → (filename_hint, ContentClass,
+# content_kwargs, url_field_name).  Used by _on_message to build content
+# parts from quoted image / file / video items.
+_QUOTE_MEDIA_MAP = {
+    "image": (
+        "image.jpg",
+        ImageContent,
+        {"type": ContentType.IMAGE},
+        "image_url",
+    ),
+    "file": (None, FileContent, {"type": ContentType.FILE}, "file_url"),
+    "video": (
+        "video.mp4",
+        VideoContent,
+        {"type": ContentType.VIDEO},
+        "video_url",
+    ),
+}
+
 
 class WecomChannel(BaseChannel):
     """WeCom AI Bot channel: WebSocket receive and send.
@@ -468,33 +487,6 @@ class WecomChannel(BaseChannel):
                 else:
                     quoted_items = []
 
-                _quote_media_map = {
-                    "image": (
-                        "image.jpg",
-                        ImageContent,
-                        {
-                            "type": ContentType.IMAGE,
-                        },
-                        "image_url",
-                    ),
-                    "file": (
-                        None,
-                        FileContent,
-                        {
-                            "type": ContentType.FILE,
-                        },
-                        "file_url",
-                    ),
-                    "video": (
-                        "video.mp4",
-                        VideoContent,
-                        {
-                            "type": ContentType.VIDEO,
-                        },
-                        "video_url",
-                    ),
-                }
-
                 for q_item in quoted_items:
                     q_type = q_item.get("msgtype") or ""
                     if q_type == "text":
@@ -508,13 +500,13 @@ class WecomChannel(BaseChannel):
                                 0,
                                 f"[quoted message: {quoted_text}]",
                             )
-                    elif q_type in _quote_media_map:
+                    elif q_type in _QUOTE_MEDIA_MAP:
                         (
                             hint_default,
                             content_cls,
                             content_kwargs,
                             url_field,
-                        ) = _quote_media_map[q_type]
+                        ) = _QUOTE_MEDIA_MAP[q_type]
                         q_data = q_item.get(q_type) or {}
                         q_url = q_data.get("url") or ""
                         q_aes_key = q_data.get("aeskey") or ""
