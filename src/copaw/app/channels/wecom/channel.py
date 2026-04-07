@@ -454,6 +454,83 @@ class WecomChannel(BaseChannel):
             else:
                 text_parts.append(f"[{msgtype}]")
 
+            # Handle quoted (replied-to) message if present
+            quote = body.get("quote")
+            if quote:
+                quote_type = quote.get("msgtype") or ""
+                if quote_type == "text":
+                    quoted_text = (
+                        (quote.get("text") or {}).get("content", "").strip()
+                    )
+                    if quoted_text:
+                        text_parts.insert(
+                            0,
+                            f"[quoted message: {quoted_text}]",
+                        )
+                elif quote_type in ("image", "file"):
+                    quote_data = quote.get(quote_type) or {}
+                    quote_url = quote_data.get("url") or ""
+                    quote_aes_key = quote_data.get("aeskey") or ""
+                    if quote_url:
+                        # Determine filename hint based on quote type
+                        hint = (
+                            "image.jpg"
+                            if quote_type == "image"
+                            else (quote_data.get("filename") or "file.bin")
+                        )
+                        quote_path = await self._download_media(
+                            quote_url,
+                            aes_key=quote_aes_key,
+                            filename_hint=hint,
+                        )
+                        if quote_path:
+                            if quote_type == "image":
+                                content_parts.append(
+                                    ImageContent(
+                                        type=ContentType.IMAGE,
+                                        image_url=quote_path,
+                                    ),
+                                )
+                            else:
+                                content_parts.append(
+                                    FileContent(
+                                        type=ContentType.FILE,
+                                        file_url=quote_path,
+                                    ),
+                                )
+                        else:
+                            text_parts.insert(
+                                0,
+                                f"[quoted {quote_type}: download failed]",
+                            )
+                elif quote_type == "video":
+                    quote_video = quote.get("video") or {}
+                    quote_url = quote_video.get("url") or ""
+                    quote_aes_key = quote_video.get("aeskey") or ""
+                    if quote_url:
+                        quote_path = await self._download_media(
+                            quote_url,
+                            aes_key=quote_aes_key,
+                            filename_hint="video.mp4",
+                        )
+                        if quote_path:
+                            content_parts.append(
+                                VideoContent(
+                                    type=ContentType.VIDEO,
+                                    video_url=quote_path,
+                                ),
+                            )
+                        else:
+                            text_parts.insert(
+                                0,
+                                "[quoted video: download failed]",
+                            )
+                else:
+                    text_parts.insert(
+                        0,
+                        f"[quoted {quote_type} message]",
+                    )
+
             text = "\n".join(text_parts).strip()
             if text:
                 content_parts.insert(
