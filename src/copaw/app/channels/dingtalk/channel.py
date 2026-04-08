@@ -971,26 +971,20 @@ class DingTalkChannel(BaseChannel):
             bot_prefix="",
         )
 
-    def _resolve_open_api_params_from_handle(
+    async def _resolve_open_api_params_from_handle(
         self,
         to_handle: str,
         meta: Optional[Dict[str, Any]],
     ) -> Dict[str, str]:
-        """Resolve Open API params from to_handle and meta (sync, no I/O).
+        """Resolve Open API params from to_handle and meta (async).
 
-        Checks meta first, then in-memory webhook store for
-        conversation_id / conversation_type / sender_staff_id.
+        Uses _load_session_webhook_entry for thread-safe access with
+        locking and disk-loading fallback.
         """
         m = meta or {}
-        webhook_entry: Optional[Dict[str, Any]] = None
         route = self._route_from_handle(to_handle)
-        webhook_key = route.get("webhook_key")
-        if webhook_key:
-            raw = self._session_webhook_store.get(webhook_key)
-            if raw is not None:
-                webhook_entry = (
-                    raw if isinstance(raw, dict) else {"webhook": raw}
-                )
+        webhook_key: str = route.get("webhook_key", "")
+        webhook_entry = await self._load_session_webhook_entry(webhook_key)
         return self._resolve_open_api_params(m, webhook_entry)
 
     async def _send_media_part_via_open_api(
@@ -1110,20 +1104,8 @@ class DingTalkChannel(BaseChannel):
             return False
 
         # Send via Open API with appropriate msgKey
-        if upload_type == "image":
-            # sampleImageMsg does not support mediaId, send as file instead
-            return await self._send_open_api_message(
-                msg_key="sampleFile",
-                msg_param={
-                    "mediaId": media_id,
-                    "fileName": filename,
-                    "fileType": ext,
-                },
-                conversation_id=conversation_id,
-                conversation_type=conversation_type,
-                sender_staff_id=sender_staff_id,
-            )
-
+        # Note: sampleImageMsg does not support mediaId, so we send as
+        # sampleFile for all media types including images.
         return await self._send_open_api_message(
             msg_key="sampleFile",
             msg_param={
@@ -1831,7 +1813,7 @@ class DingTalkChannel(BaseChannel):
         # Try sending media parts via Open API (upload + rich message)
         # instead of degrading to plain-text file paths.
         if media_parts:
-            params = self._resolve_open_api_params_from_handle(
+            params = await self._resolve_open_api_params_from_handle(
                 to_handle,
                 meta,
             )
@@ -1865,6 +1847,33 @@ class DingTalkChannel(BaseChannel):
                 ):
                     self._reply_sync(m, SENT_VIA_WEBHOOK)
                 return
+            # Open API unavailable: append text placeholders so the user
+            # is at least aware of the attachments.
+            for p in media_parts:
+                pt = getattr(p, "type", None)
+                if pt == ContentType.IMAGE and getattr(
+                    p,
+                    "image_url",
+                    None,
+                ):
+                    body += f"\n[Image: {p.image_url}]"
+                elif pt == ContentType.FILE and (
+                    getattr(p, "file_url", None) or getattr(p, "file_id", None)
+                ):
+                    furl = getattr(p, "file_url", None) or getattr(
+                        p,
+                        "file_id",
+                        None,
+                    )
+                    body += f"\n[File: {furl}]"
+                elif pt == ContentType.VIDEO and getattr(
+                    p,
+                    "video_url",
+                    None,
+                ):
+                    body += f"\n[Video: {p.video_url}]"
+                elif pt == ContentType.AUDIO and getattr(p, "data", None):
+                    body += "\n[Audio]"
 
         if (
             m.get("reply_loop") is not None
