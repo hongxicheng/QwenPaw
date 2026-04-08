@@ -61,7 +61,6 @@ from .constants import (
     DINGTALK_TOKEN_TTL_SECONDS,
     SENT_VIA_AI_CARD,
     SENT_VIA_WEBHOOK,
-    SESSION_WEBHOOK_EXPIRY_SAFETY_MARGIN_MS,
 )
 from .content_utils import (
     parse_data_url,
@@ -181,7 +180,7 @@ class DingTalkChannel(BaseChannel):
 
         # Store sessionWebhook for proactive send (in-memory).
         # Key is a handle string, e.g. "dingtalk:sw:<sender>"
-        # Value is a dict: {"webhook": str, "expired_time": int, ...}
+        # Value is a dict: {"webhook": str, "conversation_id": str, ...}
         self._session_webhook_store: Dict[str, Any] = {}
         self._session_webhook_lock = asyncio.Lock()
 
@@ -344,7 +343,6 @@ class DingTalkChannel(BaseChannel):
         await self._save_session_webhook(
             webhook_key,
             session_webhook,
-            expired_time=meta.get("session_webhook_expired_time"),
             conversation_id=meta.get("conversation_id"),
             conversation_type=meta.get("conversation_type"),
             sender_staff_id=meta.get("sender_staff_id"),
@@ -426,7 +424,6 @@ class DingTalkChannel(BaseChannel):
         self,
         webhook_key: str,
         session_webhook: str,
-        expired_time: Optional[int] = None,
         conversation_id: Optional[str] = None,
         conversation_type: Optional[str] = None,
         sender_staff_id: Optional[str] = None,
@@ -442,11 +439,10 @@ class DingTalkChannel(BaseChannel):
         logger.info(
             "dingtalk _save_session_webhook: "
             "webhook_key=%s session_from_url=%s "
-            "expired_time=%s conversation_id=%s "
+            "conversation_id=%s "
             "conversation_type=%s sender_staff_id=%s",
             webhook_key,
             session_in_url,
-            expired_time,
             conversation_id,
             conversation_type,
             sender_staff_id,
@@ -454,11 +450,36 @@ class DingTalkChannel(BaseChannel):
         async with self._session_webhook_lock:
             self._session_webhook_store[webhook_key] = {
                 "webhook": session_webhook,
-                "expired_time": expired_time,
                 "conversation_id": conversation_id,
                 "conversation_type": conversation_type,
                 "sender_staff_id": sender_staff_id,
             }
+            self._save_session_webhook_store_to_disk()
+
+    async def _invalidate_session_webhook(self, to_handle: str) -> None:
+        """Clear webhook in memory and disk after send failure.
+
+        Keeps conversation_id and other metadata so Open API fallback
+        still works on subsequent sends without a redundant failed POST.
+        """
+        route = self._route_from_handle(to_handle)
+        webhook_key = route.get("webhook_key")
+        if not webhook_key:
+            return
+        async with self._session_webhook_lock:
+            raw = self._session_webhook_store.get(webhook_key)
+            if raw is None:
+                return
+            entry = raw if isinstance(raw, dict) else {"webhook": raw}
+            if not entry.get("webhook"):
+                return
+            logger.info(
+                "dingtalk _invalidate_session_webhook: "
+                "clearing webhook for key=%s",
+                webhook_key,
+            )
+            cleaned = {k: v for k, v in entry.items() if k != "webhook"}
+            self._session_webhook_store[webhook_key] = cleaned
             self._save_session_webhook_store_to_disk()
 
     async def _load_session_webhook(self, webhook_key: str) -> Optional[str]:
@@ -500,20 +521,6 @@ class DingTalkChannel(BaseChannel):
                         entry.get("webhook", ""),
                     ),
                 )
-                if self._is_webhook_expired(entry):
-                    logger.info(
-                        "dingtalk _load_session_webhook_entry: "
-                        "webhook_key=%s is expired, clearing webhook "
-                        "but keeping conversation_id for Open API fallback",
-                        webhook_key,
-                    )
-                    # Clear webhook in memory and persist to disk
-                    cleaned = {
-                        k: v for k, v in entry.items() if k != "webhook"
-                    }
-                    self._session_webhook_store[webhook_key] = cleaned
-                    self._save_session_webhook_store_to_disk()
-                    return cleaned
                 return entry
 
             logger.info(
@@ -521,15 +528,6 @@ class DingTalkChannel(BaseChannel):
                 webhook_key,
             )
             return None
-
-    def _is_webhook_expired(self, entry: Dict[str, Any]) -> bool:
-        """Check if a webhook entry is expired (with safety margin)."""
-        expired_time = entry.get("expired_time")
-        if expired_time is None:
-            return False
-        now_ms = int(time.time() * 1000)
-        threshold = expired_time - SESSION_WEBHOOK_EXPIRY_SAFETY_MARGIN_MS
-        return now_ms >= threshold
 
     @staticmethod
     def _resolve_open_api_params(
@@ -1780,6 +1778,7 @@ class DingTalkChannel(BaseChannel):
                     bot_prefix="",
                 )
             if not text_ok:
+                await self._invalidate_session_webhook(to_handle)
                 logger.warning(
                     "dingtalk send_content_parts: webhook send failed, "
                     "trying Open API fallback",
@@ -1812,6 +1811,24 @@ class DingTalkChannel(BaseChannel):
                     i + 1,
                     ok,
                 )
+                if not ok:
+                    # Webhook media send failed: fallback to Open API
+                    logger.warning(
+                        "dingtalk send_content_parts: webhook media send "
+                        "failed for part %s, trying Open API fallback",
+                        i + 1,
+                    )
+                    params = await self._resolve_open_api_params_from_handle(
+                        to_handle,
+                        meta,
+                    )
+                    if params["conversation_id"]:
+                        await self._send_media_part_via_open_api(
+                            part,
+                            conversation_id=params["conversation_id"],
+                            conversation_type=params["conversation_type"],
+                            sender_staff_id=params["sender_staff_id"],
+                        )
             if m.get("reply_loop") is not None and m.get("reply_future"):
                 self._reply_sync(m, SENT_VIA_WEBHOOK)
             return
@@ -2979,7 +2996,8 @@ class DingTalkChannel(BaseChannel):
         if success:
             return
 
-        # Webhook send failed (possibly expired): try Open API fallback
+        # Webhook send failed (possibly expired): invalidate and try fallback
+        await self._invalidate_session_webhook(to_handle)
         logger.warning(
             "DingTalkChannel.send: sessionWebhook send failed, "
             "trying Open API fallback for to_handle=%s",
