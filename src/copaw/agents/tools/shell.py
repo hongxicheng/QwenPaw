@@ -68,8 +68,8 @@ def _collapse_embedded_newlines(cmd: str) -> str:
     while i < length:
         char = cmd[i]
 
-        # Handle escape sequences (backslash) — skip next char
-        if char == "\\" and i + 1 < length:
+        # Handle escape sequences (backslash) — skip next char if not a newline
+        if char == "\\" and i + 1 < length and cmd[i + 1] not in ("\r", "\n"):
             result.append(char)
             result.append(cmd[i + 1])
             i += 2
