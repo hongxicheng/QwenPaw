@@ -38,7 +38,7 @@ def _kill_process_tree_win32(pid: int) -> None:
 
 
 def _collapse_embedded_newlines(cmd: str) -> str:
-    r"""Replace embedded newline characters with spaces in a command string.
+    r"""Replace *unquoted* embedded newline characters with spaces.
 
     LLMs produce tool-call arguments in JSON where ``\n`` is parsed as an
     actual newline character.  In the original shell command the user
@@ -50,18 +50,61 @@ def _collapse_embedded_newlines(cmd: str) -> str:
     * **Unix** ``sh -c`` treats an unquoted newline as a command separator,
       so only the first "line" is executed with its arguments.
 
-    Collapsing these newlines to spaces is a safe default because:
+    However, newlines *inside* quoted strings (single or double quotes) are
+    intentional — e.g. ``--text "Hello\nWorld"`` — and must be preserved so
+    that downstream commands receive the correct multi-line content.
 
-    1. For the bug case (JSON artefact) it prevents truncation.
-    2. For intentional multi-line scripts on Windows the ``cmd /D /S /C``
-       wrapper *already* breaks at newlines, so this is no worse.
-    3. On Unix, callers should prefer ``&&`` / ``;`` over raw newlines for
-       multi-command sequences; a stray newline inside an argument is
-       almost certainly a JSON artefact.
+    This function only collapses newlines that appear outside of quotes.
     """
     if "\n" not in cmd:
         return cmd
-    return cmd.replace("\r\n", " ").replace("\n", " ")
+
+    result: list[str] = []
+    in_single_quote = False
+    in_double_quote = False
+    i = 0
+    length = len(cmd)
+
+    while i < length:
+        char = cmd[i]
+
+        # Handle escape sequences (backslash) — skip next char
+        if char == "\\" and i + 1 < length:
+            result.append(char)
+            result.append(cmd[i + 1])
+            i += 2
+            continue
+
+        # Toggle quote state
+        if char == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+            result.append(char)
+            i += 1
+            continue
+
+        if char == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+            result.append(char)
+            i += 1
+            continue
+
+        # Replace newlines only when outside quotes
+        if (
+            char in ("\r", "\n")
+            and not in_single_quote
+            and not in_double_quote
+        ):
+            # Collapse \r\n as a single space
+            if char == "\r" and i + 1 < length and cmd[i + 1] == "\n":
+                i += 1
+            result.append(" ")
+            i += 1
+            continue
+
+        result.append(char)
+        i += 1
+
+    return "".join(result)
 
 
 def _sanitize_win_cmd(cmd: str) -> str:
