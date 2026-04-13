@@ -52,6 +52,7 @@ from alibabacloud_dingtalk.card_1_0 import (
     models as dingtalk_card_models,
 )
 from alibabacloud_tea_util import models as tea_util_models
+from Tea.exceptions import TeaException
 from agentscope_runtime.engine.schemas.agent_schemas import RunStatus
 
 from ..utils import file_url_to_local_path
@@ -1965,6 +1966,11 @@ class DingTalkChannel(BaseChannel):
                     "🤔Thinking",
                     recall=True,
                 )
+                await self._send_emotion(
+                    incoming_msg_id,
+                    conv_id,
+                    "☹️Error",
+                )
             err_msg = str(e).strip() or "An error occurred while processing."
             self._reply_sync_batch(
                 send_meta,
@@ -2139,6 +2145,11 @@ class DingTalkChannel(BaseChannel):
                 conversation_id,
                 "🤔Thinking",
                 recall=True,
+            )
+            await self._send_emotion(
+                incoming_msg_id,
+                conversation_id,
+                "☹️Error",
             )
         if use_ai_card and card:
             final_text = card_full_text or self._build_ai_card_initial_text()
@@ -2964,8 +2975,12 @@ class DingTalkChannel(BaseChannel):
         try:
             await _do_stream(card.access_token)
         except Exception as first_exc:
+            is_unauthorized = (
+                isinstance(first_exc, TeaException)
+                and getattr(first_exc, "statusCode", None) == 401
+            )
             error_msg = str(first_exc)
-            if "401" in error_msg or "Unauthorized" in error_msg:
+            if is_unauthorized:
                 card.access_token = await self._get_access_token()
                 try:
                     await _do_stream(card.access_token)
