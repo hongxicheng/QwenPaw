@@ -4,9 +4,9 @@
 Usage:
     python scripts/records.py list --app-token TOKEN --table-id TABLE_ID [--page-size 20]
     python scripts/records.py get --app-token TOKEN --table-id TABLE_ID --record-id REC_ID
-    python scripts/records.py create --app-token TOKEN --table-id TABLE_ID --fields-json '{"fldXXX": "value"}'
+    python scripts/records.py create --app-token TOKEN --table-id TABLE_ID --fields-json '{"FieldName": "value"}'
     python scripts/records.py batch-create --app-token TOKEN --table-id TABLE_ID --records-json '[{"fields": {...}}, ...]'
-    python scripts/records.py update --app-token TOKEN --table-id TABLE_ID --record-id REC_ID --fields-json '{"fldXXX": "new"}'
+    python scripts/records.py update --app-token TOKEN --table-id TABLE_ID --record-id REC_ID --fields-json '{"FieldName": "new"}'
     python scripts/records.py delete --app-token TOKEN --table-id TABLE_ID --record-id REC_ID
 
 Output: JSON with operation result.
@@ -20,7 +20,7 @@ import sys
 
 import httpx
 
-from feishu_auth import auth_headers, get_base_url
+from feishu_auth import auth_headers, get_base_url, init_workspace
 
 
 def list_records(
@@ -242,7 +242,9 @@ def main() -> None:
     delete_p.add_argument("--table-id", required=True)
     delete_p.add_argument("--record-id", required=True)
 
+    parser.add_argument("--workspace-dir", required=True, help="Workspace directory containing agent.json")
     args = parser.parse_args()
+    init_workspace(args.workspace_dir)
 
     if args.command == "list":
         result = list_records(

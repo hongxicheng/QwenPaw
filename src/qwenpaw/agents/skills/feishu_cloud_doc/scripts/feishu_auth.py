@@ -1,14 +1,16 @@
 """Feishu/Lark authentication helper.
 
 Provides tenant_access_token retrieval for scripts that call
-Feishu Open API.  Credentials are read from environment variables
-(FEISHU_APP_ID / FEISHU_APP_SECRET) or from the QwenPaw config file
-(~/.qwenpaw/config.json  →  channels.feishu.app_id / app_secret).
+Feishu Open API.  Credentials are resolved in order:
+1. Environment variables: FEISHU_APP_ID / FEISHU_APP_SECRET
+2. Workspace agent.json → channels.feishu
+   (workspace dir passed via init_workspace() or --workspace-dir arg)
 
 Usage:
-    from feishu_auth import get_tenant_token, get_base_url
+    from feishu_auth import init_workspace, get_tenant_token, get_base_url
+    init_workspace("/path/to/workspace")   # call once before any API call
     token = get_tenant_token()
-    base = get_base_url()          # https://open.feishu.cn or larksuite
+    base = get_base_url()
 """
 
 from __future__ import annotations
@@ -22,35 +24,47 @@ from typing import Optional, Tuple
 import httpx
 
 _TOKEN_CACHE: dict[str, str] = {}
+_WORKSPACE_DIR: Optional[str] = None
+
+
+def init_workspace(workspace_dir: str) -> None:
+    """Set the workspace directory for credential resolution.
+
+    Call this once before any API call. The workspace directory contains
+    agent.json with Feishu credentials under channels.feishu.
+    """
+    global _WORKSPACE_DIR
+    _WORKSPACE_DIR = workspace_dir
 
 
 def _read_config_credentials() -> Tuple[str, str, str]:
-    """Read app_id, app_secret, domain from QwenPaw config file."""
-    config_candidates = [
-        Path.home() / ".qwenpaw" / "config.json",
-        Path.home() / ".config" / "qwenpaw" / "config.json",
-    ]
-    for config_path in config_candidates:
-        if not config_path.exists():
-            continue
-        try:
-            with open(config_path, encoding="utf-8") as fh:
-                cfg = json.load(fh)
-            feishu_cfg = (cfg.get("channels") or {}).get("feishu") or {}
-            app_id = feishu_cfg.get("app_id") or ""
-            app_secret = feishu_cfg.get("app_secret") or ""
-            domain = feishu_cfg.get("domain") or "feishu"
-            if app_id and app_secret:
-                return app_id, app_secret, domain
-        except (json.JSONDecodeError, OSError):
-            continue
+    """Read app_id, app_secret, domain from workspace agent.json."""
+    if not _WORKSPACE_DIR:
+        return "", "", "feishu"
+
+    agent_json = Path(_WORKSPACE_DIR).expanduser().resolve() / "agent.json"
+    if not agent_json.exists():
+        return "", "", "feishu"
+
+    try:
+        with open(agent_json, encoding="utf-8") as fh:
+            cfg = json.load(fh)
+        feishu_cfg = (cfg.get("channels") or {}).get("feishu") or {}
+        app_id = feishu_cfg.get("app_id") or ""
+        app_secret = feishu_cfg.get("app_secret") or ""
+        domain = feishu_cfg.get("domain") or "feishu"
+        if app_id and app_secret:
+            return app_id, app_secret, domain
+    except (json.JSONDecodeError, OSError):
+        pass
+
     return "", "", "feishu"
 
 
 def get_credentials() -> Tuple[str, str, str]:
     """Return (app_id, app_secret, domain).
 
-    Priority: environment variables > config file.
+    Priority: environment variables > workspace agent.json.
     """
     app_id = os.environ.get("FEISHU_APP_ID", "")
     app_secret = os.environ.get("FEISHU_APP_SECRET", "")
@@ -87,9 +101,9 @@ def get_tenant_token(force_refresh: bool = False) -> str:
                 {
                     "success": False,
                     "error": (
-                        "Feishu credentials not found. Set FEISHU_APP_ID and "
-                        "FEISHU_APP_SECRET environment variables, or configure "
-                        "them in ~/.qwenpaw/config.json under channels.feishu."
+                        "Feishu credentials not found. They should be in the "
+                        "workspace agent.json (channels.feishu.app_id/app_secret) "
+                        "or set via FEISHU_APP_ID/FEISHU_APP_SECRET env vars."
                     ),
                 }
             )

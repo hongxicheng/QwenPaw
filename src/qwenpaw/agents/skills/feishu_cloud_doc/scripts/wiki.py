@@ -20,7 +20,7 @@ import sys
 
 import httpx
 
-from feishu_auth import auth_headers, get_base_url
+from feishu_auth import auth_headers, get_base_url, init_workspace
 
 
 def list_spaces(page_size: int = 50, page_token: str = "") -> dict:
@@ -185,6 +185,7 @@ def create_node(
     url = f"{base}/open-apis/wiki/v2/spaces/{space_id}/nodes"
     body: dict = {
         "obj_type": obj_type,
+        "node_type": "origin",
         "title": title,
     }
     if parent_node_token:
@@ -289,7 +290,9 @@ def main() -> None:
     move_node_p.add_argument("--node-token", required=True)
     move_node_p.add_argument("--target-parent-token", required=True)
 
+    parser.add_argument("--workspace-dir", required=True, help="Workspace directory containing agent.json")
     args = parser.parse_args()
+    init_workspace(args.workspace_dir)
 
     if args.command == "list-spaces":
         result = list_spaces(args.page_size, args.page_token)

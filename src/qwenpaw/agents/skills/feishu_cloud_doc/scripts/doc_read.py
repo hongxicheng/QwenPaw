@@ -15,7 +15,7 @@ import sys
 
 import httpx
 
-from feishu_auth import auth_headers, get_base_url
+from feishu_auth import auth_headers, get_base_url, init_workspace
 
 
 def get_raw_content(document_id: str) -> dict:
@@ -111,7 +111,9 @@ def main() -> None:
         default="raw",
         help="Output format: raw (plain text), blocks (block tree), info (metadata)",
     )
+    parser.add_argument("--workspace-dir", required=True, help="Workspace directory containing agent.json")
     args = parser.parse_args()
+    init_workspace(args.workspace_dir)
 
     if args.format == "raw":
         result = get_raw_content(args.doc_id)

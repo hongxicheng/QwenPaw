@@ -16,7 +16,7 @@ import sys
 
 import httpx
 
-from feishu_auth import auth_headers, get_base_url
+from feishu_auth import auth_headers, get_base_url, init_workspace
 
 
 def create_document(title: str, folder_token: str = "") -> dict:
@@ -56,7 +56,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Create a Feishu document")
     parser.add_argument("--title", required=True, help="Document title")
     parser.add_argument("--folder", default="", help="Folder token (optional)")
+    parser.add_argument("--workspace-dir", required=True, help="Workspace directory containing agent.json")
     args = parser.parse_args()
+    init_workspace(args.workspace_dir)
 
     result = create_document(args.title, args.folder)
     print(json.dumps(result, ensure_ascii=False, indent=2))

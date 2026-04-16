@@ -445,6 +445,14 @@ export function ChannelDrawer({
       case "feishu":
         return (
           <>
+            <ConfigProvider prefixCls="ant">
+              <Alert
+                type="info"
+                showIcon
+                message={t("channels.feishuCloudDocSkillTip")}
+                style={{ marginBottom: 16 }}
+              />
+            </ConfigProvider>
             <Form.Item
               name="domain"
               label={t("channels.feishuRegion")}

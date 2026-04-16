@@ -19,7 +19,7 @@ import sys
 
 import httpx
 
-from feishu_auth import auth_headers, get_base_url
+from feishu_auth import auth_headers, get_base_url, init_workspace
 
 
 def create_bitable(name: str, folder_token: str = "") -> dict:
@@ -213,7 +213,9 @@ def main() -> None:
     add_field_p.add_argument("--field-name", required=True)
     add_field_p.add_argument("--field-type", type=int, required=True)
 
+    parser.add_argument("--workspace-dir", required=True, help="Workspace directory containing agent.json")
     args = parser.parse_args()
+    init_workspace(args.workspace_dir)
 
     if args.command == "create":
         result = create_bitable(args.name, args.folder)

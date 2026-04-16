@@ -17,7 +17,7 @@ import sys
 
 import httpx
 
-from feishu_auth import auth_headers, get_base_url
+from feishu_auth import auth_headers, get_base_url, init_workspace
 
 
 def get_spreadsheet_info(token: str) -> dict:
@@ -111,7 +111,9 @@ def main() -> None:
     parser.add_argument("--range", default="", help="Cell range (e.g. Sheet1!A1:D10)")
     parser.add_argument("--info", action="store_true", help="Get spreadsheet metadata")
     parser.add_argument("--list-sheets", action="store_true", help="List all worksheets")
+    parser.add_argument("--workspace-dir", required=True, help="Workspace directory containing agent.json")
     args = parser.parse_args()
+    init_workspace(args.workspace_dir)
 
     if args.info:
         result = get_spreadsheet_info(args.token)

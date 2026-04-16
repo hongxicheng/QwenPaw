@@ -17,7 +17,7 @@ import sys
 
 import httpx
 
-from feishu_auth import auth_headers, get_base_url
+from feishu_auth import auth_headers, get_base_url, init_workspace
 
 
 def write_range(token: str, range_str: str, values: list[list]) -> dict:
@@ -123,7 +123,9 @@ def main() -> None:
     parser.add_argument("--add-sheet", action="store_true", help="Add a new worksheet")
     parser.add_argument("--sheet-title", default="", help="Title for new worksheet")
     parser.add_argument("--sheet-index", type=int, default=-1, help="Index for new worksheet")
+    parser.add_argument("--workspace-dir", required=True, help="Workspace directory containing agent.json")
     args = parser.parse_args()
+    init_workspace(args.workspace_dir)
 
     if args.add_sheet:
         if not args.sheet_title:

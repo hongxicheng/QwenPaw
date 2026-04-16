@@ -32,7 +32,7 @@ import sys
 
 import httpx
 
-from feishu_auth import auth_headers, get_base_url
+from feishu_auth import auth_headers, get_base_url, init_workspace
 
 
 def _fetch_all_blocks(document_id: str) -> list[dict] | None:
@@ -101,7 +101,7 @@ def _batch_delete_children(
         f"/blocks/{parent_block_id}/children/batch_delete"
     )
     body = {"start_index": start_index, "end_index": end_index}
-    resp = httpx.delete(url, headers=auth_headers(), json=body, timeout=30)
+    resp = httpx.request("DELETE", url, headers=auth_headers(), json=body, timeout=30)
     data = resp.json()
 
     if data.get("code") != 0:
@@ -315,7 +315,9 @@ def main() -> None:
         action="store_true",
         help="Require exact text match instead of substring (for --action delete-by-text)",
     )
+    parser.add_argument("--workspace-dir", required=True, help="Workspace directory containing agent.json")
     args = parser.parse_args()
+    init_workspace(args.workspace_dir)
 
     if args.action == "delete":
         if not args.block_id:
