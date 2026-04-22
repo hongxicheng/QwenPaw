@@ -212,8 +212,6 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
 
     async def process(self, callback: CallbackMessage) -> tuple[int, str]:
         # pylint: disable=too-many-branches,too-many-statements
-        print(callback)
-        print("*" * 100)
         try:
             # Raw msgId from channel callback for dedup (not assigned id).
             raw_data = getattr(callback, "data", None) or {}
