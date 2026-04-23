@@ -950,6 +950,18 @@ class TelegramChannel(BaseChannel):
                 command="history",
                 description="Show conversation history",
             ),
+            BotCommand(
+                command="model",
+                description="Show or switch AI model",
+            ),
+            BotCommand(
+                command="stop",
+                description="Stop the current task",
+            ),
+            BotCommand(
+                command="skills",
+                description="List enabled skills",
+            ),
         ]
         try:
             await app.bot.set_my_commands(commands)
