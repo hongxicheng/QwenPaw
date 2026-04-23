@@ -1365,20 +1365,7 @@ class QQChannel(BaseChannel):
     def _find_quoted_element(
         d: Dict[str, Any],
     ) -> Optional[Dict[str, Any]]:
-        """Locate the quoted (replied-to) element from QQ msg_elements.
-
-        QQ embeds the referenced message inside ``msg_elements``.  The
-        ``message_scene.ext`` list contains entries like
-        ``ref_msg_idx=REFIDX_xxx`` that identify which element is the
-        quoted one.  We match the ``ref_msg_idx`` value against each
-        element's ``msg_idx`` to locate the correct entry.
-
-        If no exact match is found we fall back to the first element
-        whose ``msg_idx`` differs from the current message's own index.
-
-        Returns the matched element dict, or *None* if no quoted
-        element is present.
-        """
+        """Find the quoted msg_elements entry by matching ref_msg_idx."""
         msg_elements = d.get("msg_elements")
         if not msg_elements or not isinstance(msg_elements, list):
             return None
@@ -1418,11 +1405,6 @@ class QQChannel(BaseChannel):
         d: Dict[str, Any],
     ) -> None:
         """Handle one WS message event via spec lookup."""
-        logger.debug(
-            "qq raw message event_type=%s payload=%s",
-            event_type,
-            json.dumps(d, ensure_ascii=False, default=str),
-        )
         spec = _MESSAGE_EVENT_SPECS.get(event_type)
         if spec is None:
             return
@@ -1459,11 +1441,7 @@ class QQChannel(BaseChannel):
             channel_id=d.get("channel_id", ""),
         )
 
-        # Handle quoted (replied-to) message if present.
-        # QQ embeds the referenced message content inside msg_elements;
-        # we extract text and attachments, prepending quoted text as
-        # "[quoted message: ...]" and appending quoted media parts,
-        # following the same convention used by WeCom and Feishu channels.
+        # Extract quoted message (text + attachments) from msg_elements.
         text_parts: List[str] = []
         content_parts: List[Any] = []
         quoted_elem = self._find_quoted_element(d)
