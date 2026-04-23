@@ -958,10 +958,6 @@ class TelegramChannel(BaseChannel):
                 command="stop",
                 description="Stop the current task",
             ),
-            BotCommand(
-                command="skills",
-                description="List enabled skills",
-            ),
         ]
         try:
             await app.bot.set_my_commands(commands)
