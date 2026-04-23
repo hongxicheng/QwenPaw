@@ -1361,12 +1361,68 @@ class QQChannel(BaseChannel):
     # WebSocket: message event handling
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _find_quoted_element(
+        d: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """Locate the quoted (replied-to) element from QQ msg_elements.
+
+        QQ embeds the referenced message inside ``msg_elements``.  The
+        ``message_scene.ext`` list contains entries like
+        ``ref_msg_idx=REFIDX_xxx`` that identify which element is the
+        quoted one.  We match the ``ref_msg_idx`` value against each
+        element's ``msg_idx`` to locate the correct entry.
+
+        If no exact match is found we fall back to the first element
+        whose ``msg_idx`` differs from the current message's own index.
+
+        Returns the matched element dict, or *None* if no quoted
+        element is present.
+        """
+        msg_elements = d.get("msg_elements")
+        if not msg_elements or not isinstance(msg_elements, list):
+            return None
+
+        scene_ext = (d.get("message_scene") or {}).get("ext") or []
+
+        ref_idx: str = ""
+        own_idx: str = ""
+        for entry in scene_ext:
+            if isinstance(entry, str):
+                if entry.startswith("ref_msg_idx="):
+                    ref_idx = entry[len("ref_msg_idx=") :]
+                elif entry.startswith("msg_idx="):
+                    own_idx = entry[len("msg_idx=") :]
+
+        if not ref_idx:
+            return None
+
+        for elem in msg_elements:
+            if not isinstance(elem, dict):
+                continue
+            if elem.get("msg_idx") == ref_idx:
+                return elem
+
+        for elem in msg_elements:
+            if not isinstance(elem, dict):
+                continue
+            elem_idx = elem.get("msg_idx", "")
+            if elem_idx and elem_idx != own_idx:
+                return elem
+
+        return None
+
     def _handle_msg_event(
         self,
         event_type: str,
         d: Dict[str, Any],
     ) -> None:
         """Handle one WS message event via spec lookup."""
+        logger.debug(
+            "qq raw message event_type=%s payload=%s",
+            event_type,
+            json.dumps(d, ensure_ascii=False, default=str),
+        )
         spec = _MESSAGE_EVENT_SPECS.get(event_type)
         if spec is None:
             return
@@ -1403,12 +1459,46 @@ class QQChannel(BaseChannel):
             channel_id=d.get("channel_id", ""),
         )
 
+        # Handle quoted (replied-to) message if present.
+        # QQ embeds the referenced message content inside msg_elements;
+        # we extract text and attachments, prepending quoted text as
+        # "[quoted message: ...]" and appending quoted media parts,
+        # following the same convention used by WeCom and Feishu channels.
+        text_parts: List[str] = []
+        content_parts: List[Any] = []
+        quoted_elem = self._find_quoted_element(d)
+        if quoted_elem is not None:
+            quoted_text = (quoted_elem.get("content") or "").strip()
+            quoted_attachments = quoted_elem.get("attachments") or []
+            if quoted_text:
+                text_parts.insert(0, f"[quoted message: {quoted_text}]")
+            if quoted_attachments:
+                quoted_media = self._parse_qq_attachments(quoted_attachments)
+                if quoted_media:
+                    content_parts.extend(quoted_media)
+                else:
+                    text_parts.insert(0, "[quoted media: download failed]")
+            if not quoted_text and not quoted_attachments:
+                text_parts.insert(0, "[quoted message]")
+            logger.info(
+                "qq quoted message detected, text=%r attachments=%d",
+                quoted_text[:100] if quoted_text else "",
+                len(quoted_attachments),
+            )
+        if text:
+            text_parts.append(text)
+        combined_text = "\n".join(text_parts).strip()
+
+        if combined_text:
+            content_parts.insert(
+                0,
+                TextContent(type=ContentType.TEXT, text=combined_text),
+            )
+
         native = {
             "channel_id": "qq",
             "sender_id": sender,
-            "content_parts": [
-                TextContent(type=ContentType.TEXT, text=text),
-            ],
+            "content_parts": content_parts,
             "meta": meta,
         }
         request = self.build_agent_request_from_native(native)
@@ -1424,7 +1514,7 @@ class QQChannel(BaseChannel):
             spec.message_type,
             sender,
             extra_str,
-            text[:100],
+            combined_text[:100],
         )
 
     # ------------------------------------------------------------------
