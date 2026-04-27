@@ -58,6 +58,7 @@ _ALL_CHANNEL_NAMES = {
     "qq": "QQ",
     "console": "Console",
     "voice": "Twilio",
+    "weixin": "WeChat",
 }
 # Public alias for tests and external use.
 CHANNEL_NAMES = _ALL_CHANNEL_NAMES
