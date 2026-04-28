@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Drawer } from "antd";
 import { IconButton } from "@agentscope-ai/design";
 import { SparkOperateRightLine } from "@agentscope-ai/icons";
@@ -13,7 +19,15 @@ import { chatApi } from "../../../../api/modules/chat";
 import sessionApi from "../../sessionApi";
 import ChatSessionItem from "../ChatSessionItem";
 import { getChannelLabel } from "../../../Control/Channels/components";
+import {
+  ContextMenu,
+  useContextMenu,
+  type ContextMenuItem,
+} from "../../../../components/ContextMenu";
 import styles from "./index.module.less";
+
+/** Number of sessions to render per page for progressive loading */
+const PAGE_SIZE = 50;
 
 /** Sessions from QwenPaw backend include extra fields beyond the runtime UI type */
 interface ExtendedChatSession extends IAgentScopeRuntimeWebUISession {
@@ -74,17 +88,42 @@ const ChatSessionDrawer: React.FC<ChatSessionDrawerProps> = (props) => {
   /** Current value of the rename input */
   const [editValue, setEditValue] = useState("");
 
+  /** Progressive rendering: only show the first N sessions, load more on scroll */
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  /** Shared context menu — only one instance instead of one per item */
+  const sharedContextMenu = useContextMenu();
+  const [contextMenuSessionId, setContextMenuSessionId] = useState<
+    string | null
+  >(null);
+
+  /** Reset visible count when drawer opens */
+  useEffect(() => {
+    if (props.open) {
+      setVisibleCount(PAGE_SIZE);
+    }
+  }, [props.open]);
+
+  /** Load more sessions when scrolling near the bottom */
+  const handleListScroll = useCallback(() => {
+    const listElement = listRef.current;
+    if (!listElement) return;
+    const { scrollTop, scrollHeight, clientHeight } = listElement;
+    if (scrollHeight - scrollTop - clientHeight < 200) {
+      setVisibleCount((prev) => prev + PAGE_SIZE);
+    }
+  }, []);
+
   /** Sessions sorted by pinned first, then by createdAt descending */
   const sortedSessions = useMemo(() => {
     return [...sessions].sort((a, b) => {
       const extA = a as ExtendedChatSession;
       const extB = b as ExtendedChatSession;
 
-      // Pinned items come first
       if (extA.pinned && !extB.pinned) return -1;
       if (!extA.pinned && extB.pinned) return 1;
 
-      // Then sort by createdAt descending
       const aTime = extA.createdAt;
       const bTime = extB.createdAt;
       if (!aTime && !bTime) return 0;
@@ -94,13 +133,19 @@ const ChatSessionDrawer: React.FC<ChatSessionDrawerProps> = (props) => {
     });
   }, [sessions]);
 
+  /** Only render a slice of sorted sessions for progressive loading */
+  const visibleSessions = useMemo(
+    () => sortedSessions.slice(0, visibleCount),
+    [sortedSessions, visibleCount],
+  );
+
   /** Re-fetch session list from the backend and sync to context state */
   const refreshSessions = useCallback(async () => {
     const list = await sessionApi.getSessionList();
     setSessions(list);
   }, [setSessions]);
 
-  /** Open drawer → refresh session list (same deduped fetch as getSessionList). */
+  /** Open drawer → refresh session list */
   useEffect(() => {
     if (!props.open) return;
 
@@ -113,7 +158,6 @@ const ChatSessionDrawer: React.FC<ChatSessionDrawerProps> = (props) => {
           setSessions(list);
         }
       } catch (error) {
-        // It's good practice to log errors.
         console.error("Failed to refresh session list:", error);
       }
     };
@@ -168,7 +212,7 @@ const ChatSessionDrawer: React.FC<ChatSessionDrawerProps> = (props) => {
     setEditValue(value);
   }, []);
 
-  /** Submit rename: send a minimal patch so stale session fields cannot overwrite the title. */
+  /** Submit rename */
   const handleEditSubmit = useCallback(async () => {
     if (!editingSessionId) return;
 
@@ -218,10 +262,63 @@ const ChatSessionDrawer: React.FC<ChatSessionDrawerProps> = (props) => {
     [sessions, refreshSessions],
   );
 
+  /** Show shared context menu for a specific session */
+  const handleItemContextMenu = useCallback(
+    (sessionId: string, event: React.MouseEvent) => {
+      setContextMenuSessionId(sessionId);
+      sharedContextMenu.show(event);
+    },
+    [sharedContextMenu],
+  );
+
+  /** Build context menu items for the currently right-clicked session */
+  const contextMenuItems: ContextMenuItem[] = useMemo(() => {
+    if (!contextMenuSessionId) return [];
+    const session = sessions.find((s) => s.id === contextMenuSessionId) as
+      | ExtendedChatSession
+      | undefined;
+    return [
+      {
+        key: "open",
+        label: t("chat.contextMenu.open", "Open"),
+        onClick: () => handleSessionClick(contextMenuSessionId),
+      },
+      {
+        key: "rename",
+        label: t("chat.contextMenu.rename", "Rename"),
+        onClick: () =>
+          handleEditStart(contextMenuSessionId, session?.name || "New Chat"),
+      },
+      {
+        key: "pin",
+        label: session?.pinned
+          ? t("chat.contextMenu.unpin", "Unpin")
+          : t("chat.contextMenu.pin", "Pin"),
+        onClick: () => handlePinToggle(contextMenuSessionId),
+      },
+      { key: "divider-1", label: "", divider: true },
+      {
+        key: "delete",
+        label: t("chat.contextMenu.delete", "Delete"),
+        danger: true,
+        onClick: () => handleDelete(contextMenuSessionId),
+      },
+    ];
+  }, [
+    contextMenuSessionId,
+    sessions,
+    t,
+    handleSessionClick,
+    handleEditStart,
+    handlePinToggle,
+    handleDelete,
+  ]);
+
   return (
     <Drawer
       open={props.open}
       onClose={props.onClose}
+      destroyOnClose
       placement="right"
       width={360}
       closable={false}
@@ -263,8 +360,8 @@ const ChatSessionDrawer: React.FC<ChatSessionDrawerProps> = (props) => {
       {/* Session list */}
       <div className={styles.listWrapper}>
         <div className={styles.topGradient} />
-        <div className={styles.list}>
-          {sortedSessions.map((session) => {
+        <div className={styles.list} ref={listRef} onScroll={handleListScroll}>
+          {visibleSessions.map((session) => {
             const ext = session as ExtendedChatSession;
             const channelKey = ext.channel?.trim() || "";
             const channelLabel = channelKey
@@ -273,6 +370,7 @@ const ChatSessionDrawer: React.FC<ChatSessionDrawerProps> = (props) => {
             return (
               <ChatSessionItem
                 key={session.id}
+                sessionId={session.id!}
                 name={session.name || "New Chat"}
                 time={formatCreatedAt(ext.createdAt ?? null)}
                 channelKey={channelKey || undefined}
@@ -285,21 +383,29 @@ const ChatSessionDrawer: React.FC<ChatSessionDrawerProps> = (props) => {
                 editValue={
                   editingSessionId === session.id ? editValue : undefined
                 }
-                onClick={() => handleSessionClick(session.id!)}
-                onEdit={() =>
-                  handleEditStart(session.id!, session.name || "New Chat")
-                }
-                onDelete={() => handleDelete(session.id!)}
-                onPin={() => handlePinToggle(session.id!)}
+                onClick={handleSessionClick}
+                onEdit={handleEditStart}
+                onDelete={handleDelete}
+                onPin={handlePinToggle}
                 onEditChange={handleEditChange}
                 onEditSubmit={handleEditSubmit}
                 onEditCancel={handleEditCancel}
+                onContextMenu={handleItemContextMenu}
               />
             );
           })}
         </div>
         <div className={styles.bottomGradient} />
       </div>
+
+      {/* Shared context menu — single instance for all session items */}
+      <ContextMenu
+        visible={sharedContextMenu.visible}
+        x={sharedContextMenu.x}
+        y={sharedContextMenu.y}
+        items={contextMenuItems}
+        onClose={sharedContextMenu.hide}
+      />
     </Drawer>
   );
 };

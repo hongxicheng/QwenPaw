@@ -1566,6 +1566,8 @@
       "placeholder": "Search messages...",
       "noResults": "No results found",
       "resultsCount": "Found {{count}} result(s)",
+      "searching": "Searching {{progress}}...",
+      "loading": "Loading...",
       "userMessage": "User",
       "assistantMessage": "Assistant",
       "titleMatch": "Title"
