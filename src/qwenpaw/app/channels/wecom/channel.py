@@ -644,9 +644,7 @@ class WecomChannel(BaseChannel):
             native = {
                 "channel_id": self.channel,
                 "sender_id": sender_id,
-                # Group chats use a non-empty placeholder to prevent
-                # Runner.stream_query from overwriting it with session_id.
-                "user_id": "group" if is_group else sender_id,
+                "user_id": sender_id,
                 "session_id": session_id,
                 "content_parts": content_parts,
                 "meta": meta,
