@@ -272,11 +272,15 @@ class QwenPawACPAgent(Agent):
         workspace_dir: Path | None = None,
         local_diagnostics: bool = False,
         runtime_provider: OpenAIRuntimeProviderConfig | None = None,
+        mode: str | None = None,
     ):
         self._agent_id = agent_id
         self._workspace_dir = workspace_dir
         self._local_diagnostics = local_diagnostics
         self._runtime_provider = runtime_provider
+        # Runtime loop mode (e.g. "coding"); distinct from the ACP session
+        # config option "mode" (MODE_CONFIG_ID), which is a permission mode.
+        self._mode = mode
         self._runtime_provider_manager: ProviderManager | None = None
         self._runtime_provider_instance: Any | None = None
         self._previous_active_model: ModelSlotConfig | None = None
@@ -319,6 +323,23 @@ class QwenPawACPAgent(Agent):
         if self._workspace_dir is not None:
             return self._workspace_dir
         return WORKING_DIR / "workspaces" / agent_id
+
+    @staticmethod
+    def _enable_coding_mode(agent_id: str) -> None:
+        """Persist the Code Mode switch for the ACP process's agent.
+
+        Code Mode has no slash command: it is the per-agent configuration
+        switch the Console exposes. Enabling it before the workspace
+        starts makes the first prompt build the ``run_code`` toolkit.
+        """
+        from ...config.config import save_agent_config
+
+        agent_config = load_agent_config(agent_id)
+        if agent_config.coding_mode.enabled:
+            return
+        agent_config.coding_mode.enabled = True
+        save_agent_config(agent_id, agent_config)
+        logger.info("ACP: enabled Code Mode for agent %s", agent_id)
 
     def _session_info(
         self,
@@ -450,6 +471,8 @@ class QwenPawACPAgent(Agent):
 
             agent_id = self._resolve_agent_id()
             workspace_dir = self._resolve_workspace_dir(agent_id)
+            if self._mode == "coding":
+                await run_sync_io(self._enable_coding_mode, agent_id)
 
             workspace = Workspace(
                 agent_id=agent_id,
@@ -1572,6 +1595,7 @@ async def run_qwenpaw_agent(
     workspace_dir: Path | None = None,
     local_diagnostics: bool = False,
     runtime_provider: OpenAIRuntimeProviderConfig | None = None,
+    mode: str | None = None,
 ) -> None:
     """Entry point: run QwenPaw as an ACP agent over stdio."""
     agent = QwenPawACPAgent(
@@ -1579,6 +1603,7 @@ async def run_qwenpaw_agent(
         workspace_dir=workspace_dir,
         local_diagnostics=local_diagnostics,
         runtime_provider=runtime_provider,
+        mode=mode,
     )
     try:
         # pylint: disable=protected-access

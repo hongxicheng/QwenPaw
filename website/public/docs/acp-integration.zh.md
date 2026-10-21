@@ -141,9 +141,15 @@ qwenpaw acp --workspace /path/to/workspace
 
 # 启用调试日志（输出到 stderr）
 qwenpaw acp --debug
+
+# 以 Code 模式启动
+qwenpaw acp --mode coding
 ```
 
 进程通过 stdin/stdout 使用 ACP JSON-RPC 协议通信，stderr 用于日志输出。
+
+`--mode coding` 会在工作区启动前打开该智能体的 Code Mode 配置开关，模型因此只看到
+一个 `run_code` 工具，而不是原生工具列表。不传该参数时，智能体已持久化的设置保持不变。
 
 ### 支持的 ACP 方法
 

@@ -141,9 +141,14 @@ qwenpaw acp --workspace /path/to/workspace
 
 # Enable debug logging to stderr
 qwenpaw acp --debug
+
+# Start with Code Mode enabled
+qwenpaw acp --mode coding
 ```
 
 The process communicates over stdin/stdout using the ACP JSON-RPC protocol. stderr is used for logging.
+
+`--mode coding` enables the agent's Code Mode configuration switch before the workspace starts, so the model receives the single `run_code` tool instead of the native tool list. Omit the flag to keep the agent's persisted setting unchanged.
 
 ### Supported ACP Methods
 
