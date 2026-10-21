@@ -2,6 +2,8 @@
 """Tests for ACP ``--mode`` first-message prefixing."""
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from qwenpaw.agents.acp.server import QwenPawACPAgent
 
 
@@ -85,3 +87,40 @@ async def test_close_session_discards_marker():
     agent._apply_mode("first", "s1")
     await agent.close_session(session_id="s1")
     assert agent._apply_mode("restart", "s1") == "/goal restart"
+
+
+def test_stop_gate_bridge_exposes_workspace_handlers():
+    agent = _make_agent()
+    handler = object()
+    workspace = SimpleNamespace(
+        plugins=SimpleNamespace(stop_handlers=[handler])
+    )
+    from qwenpaw.plugins.registry import PluginRegistry
+
+    try:
+        agent._install_stop_gate_bridge("default", workspace)
+        assert PluginRegistry.get_stop_handlers(
+            agent_id="default"
+        ) == [handler]
+        assert PluginRegistry.get_stop_handlers(agent_id="other") == []
+    finally:
+        PluginRegistry().set_workspace_manager(None)
+
+
+def test_stop_gate_bridge_cleared_on_shutdown():
+    agent = _make_agent()
+    workspace = SimpleNamespace(
+        plugins=SimpleNamespace(stop_handlers=[object()])
+    )
+    from qwenpaw.plugins.registry import PluginRegistry
+
+    agent._install_stop_gate_bridge("default", workspace)
+    try:
+        import asyncio
+
+        asyncio.run(agent._shutdown_workspace())
+        assert (
+            PluginRegistry.get_stop_handlers(agent_id="default") == []
+        )
+    finally:
+        PluginRegistry().set_workspace_manager(None)
