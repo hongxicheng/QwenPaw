@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -121,3 +123,58 @@ def test_landlock_command_writes_restricted_wrapper(tmp_path):
     assert directory in script
     # The shared /tmp grant is dropped; only the worker directory stays.
     assert f"add_path('/tmp'" not in script
+
+
+@pytest.mark.skipif(
+    sys.platform != f"linux",
+    reason=f"Landlock is Linux-only",
+)
+def test_landlock_wrapper_blocks_paths_outside_workspace(tmp_path):
+    from qwenpaw.sandbox.config import _probe_linux_landlock
+
+    capability = _probe_linux_landlock()
+    if not capability.supported:
+        pytest.skip(capability.reason)
+
+    allowed = tmp_path / f"allowed"
+    denied = tmp_path / f"denied"
+    allowed.mkdir()
+    denied.mkdir()
+    secret = denied / f"secret.txt"
+    secret.write_text(f"secret", encoding=f"utf-8")
+    result = allowed / f"result.txt"
+    probe = allowed / f"probe.py"
+    probe.write_text(
+        f"from pathlib import Path\n"
+        f"try:\n"
+        f"    Path({str(secret)!r}).read_text()\n"
+        f"except Exception:\n"
+        f"    Path({str(result)!r}).write_text('denied')\n"
+        f"else:\n"
+        f"    Path({str(result)!r}).write_text('readable')\n",
+        encoding=f"utf-8",
+    )
+    config = SandboxConfig(
+        mode=SandboxMode.SEATBELT,
+        workspace_dir=str(allowed),
+        allow_read_all=False,
+        mounts=[MountSpec(str(allowed), writable=True)],
+        network_allow=[],
+    )
+    wrapped = _process.WorkerProcess._landlock_command(
+        [sys.executable, str(probe)],
+        config,
+        str(allowed),
+        capability.landlock_abi_version,
+    )
+
+    completed = subprocess.run(
+        wrapped,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert result.read_text(encoding=f"utf-8") == f"denied"
