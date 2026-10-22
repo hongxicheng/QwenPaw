@@ -293,6 +293,7 @@ def _generate_sandbox_script(  # noqa: E501  pylint: disable=too-many-branches,t
     cmd: str,
     cwd: str,
     abi_version: int,
+    allow_tmp: bool = True,
 ) -> str:
     """Generate a Python script that applies Landlock and execs the command.
 
@@ -302,6 +303,9 @@ def _generate_sandbox_script(  # noqa: E501  pylint: disable=too-many-branches,t
     3. Adds path rules based on SandboxConfig
     4. Restricts itself
     5. Execs the shell command
+
+    ``allow_tmp=False`` drops the shared ``/tmp`` grant so callers can
+    expose only their own directory (the Code Mode worker does this).
     """
     # Compute access rights for the ruleset
     handled_fs = _get_all_fs_access(abi_version)
@@ -327,8 +331,9 @@ def _generate_sandbox_script(  # noqa: E501  pylint: disable=too-many-branches,t
         if os.path.exists(sp):
             path_rules.append((sp, _FS_READ_ACCESS | _FS_EXEC_ACCESS, True))
 
-    # /tmp always writable (many tools need it)
-    if os.path.exists("/tmp"):
+    # /tmp is writable by default (many tools need it). Code Mode
+    # passes allow_tmp=False and grants only its own temp directory.
+    if allow_tmp and os.path.exists("/tmp"):
         path_rules.append(
             (
                 "/tmp",

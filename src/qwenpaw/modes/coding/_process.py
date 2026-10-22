@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import shlex
 import signal
 import sys
 import tempfile
 from contextlib import AsyncExitStack
+from dataclasses import replace
 from pathlib import Path
 
 import psutil
@@ -18,8 +20,62 @@ import psutil
 from ...sandbox import BubblewrapSandbox, MacOSSandbox
 from ...sandbox import MountSpec, SandboxConfig, SandboxMode
 from ...sandbox import WindowsAppContainerSandbox
+from ...sandbox import probe_sandbox_support
+from ...sandbox.config import _probe_linux_landlock
+from ...sandbox.linux_sandbox import _generate_sandbox_script
 
 MAX_MESSAGE_BYTES = 16 * 1024 * 1024
+
+logger = logging.getLogger(__name__)
+
+_SANDBOX_MODES = {
+    f"bwrap": SandboxMode.BUBBLEWRAP,
+    f"bubblewrap": SandboxMode.BUBBLEWRAP,
+    f"landlock": SandboxMode.LANDLOCK,
+    f"none": SandboxMode.NONE,
+}
+
+
+async def _linux_sandbox_mode() -> tuple[SandboxMode, int]:
+    """Resolve requested isolation and the Landlock ABI version."""
+    requested = (
+        os.environ.get(
+            "QWENPAW_CODE_MODE_SANDBOX",
+            f"auto",
+        )
+        .strip()
+        .lower()
+    )
+    if requested == f"auto":
+        capability = await asyncio.to_thread(probe_sandbox_support)
+        if capability.mode == SandboxMode.NONE:
+            raise RuntimeError(
+                f"Code Mode requires Linux process isolation, but no "
+                f"sandbox is available: {capability.reason}",
+            )
+        return capability.mode, capability.landlock_abi_version
+    try:
+        mode = _SANDBOX_MODES[requested]
+    except KeyError:
+        raise RuntimeError(
+            f"QWENPAW_CODE_MODE_SANDBOX must be auto, bwrap, landlock, "
+            f"or none (got {requested!r})",
+        ) from None
+    if mode == SandboxMode.LANDLOCK:
+        # probe_sandbox_support() prefers bwrap, so probe Landlock alone
+        # when the caller explicitly asks for it.
+        capability = await asyncio.to_thread(_probe_linux_landlock)
+        if not capability.supported:
+            raise RuntimeError(
+                f"Landlock is unavailable: {capability.reason}",
+            )
+        return mode, capability.landlock_abi_version
+    if mode == SandboxMode.NONE:
+        logger.warning(
+            f"Code Mode is running UNSANDBOXED; Python can access the "
+            f"workspace and network directly",
+        )
+    return mode, 0
 
 
 class WorkerProcess:
@@ -70,7 +126,27 @@ class WorkerProcess:
             if sys.platform == "win32":
                 await self._start_windows(command, config, env)
             else:
-                command = self._isolated_command(command, config)
+                if sys.platform == "linux":
+                    mode, abi_version = await _linux_sandbox_mode()
+                    logger.info(
+                        f"Code Mode sandbox: {mode.value} "
+                        f"(landlock_abi={abi_version})",
+                    )
+                    if mode == SandboxMode.LANDLOCK:
+                        command = self._landlock_command(
+                            command,
+                            config,
+                            directory,
+                            abi_version,
+                        )
+                    elif mode == SandboxMode.BUBBLEWRAP:
+                        command = self._isolated_command(command, config)
+                    elif mode != SandboxMode.NONE:
+                        raise RuntimeError(
+                            f"Unsupported Code Mode sandbox: {mode.value}",
+                        )
+                else:
+                    command = self._isolated_command(command, config)
                 self.process = await asyncio.create_subprocess_exec(
                     *command,
                     stdin=asyncio.subprocess.PIPE,
@@ -143,6 +219,26 @@ class WorkerProcess:
                 f"No Code Mode process isolation for {sys.platform}",
             )
         return command
+
+    @staticmethod
+    def _landlock_command(command, config, directory, abi_version):
+        """Wrap the worker in an unprivileged Landlock ruleset.
+
+        Landlock needs no user namespace, so it works inside containers
+        that deny nested namespace creation. The generated wrapper
+        restricts itself and then execs the worker; ``exec`` keeps the
+        shell from adding a long-lived parent process.
+        """
+        script = _generate_sandbox_script(
+            replace(config, mode=SandboxMode.LANDLOCK),
+            f"exec {shlex.join(command)}",
+            directory,
+            abi_version or 1,
+            allow_tmp=False,
+        )
+        wrapper = Path(directory) / "landlock-wrapper.py"
+        wrapper.write_text(script, encoding="utf-8")
+        return [command[0], "-I", "-S", "-u", str(wrapper)]
 
     async def _start_windows(self, command, config, env) -> None:
         config.mode = SandboxMode.WINDOWS

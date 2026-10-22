@@ -2,12 +2,14 @@
 """Tests for the ``qwenpaw acp`` CLI command."""
 from __future__ import annotations
 
+import pytest
 from click.testing import CliRunner
 
 from qwenpaw.cli.acp_cmd import acp_cmd
 
 
-def test_acp_cmd_passes_local_diagnostics(monkeypatch, tmp_path):
+@pytest.mark.parametrize(f"budget", [None, -1, 100])
+def test_acp_cmd_passes_local_diagnostics(monkeypatch, tmp_path, budget):
     captured = {}
 
     async def fake_run_qwenpaw_agent(**kwargs):
@@ -26,6 +28,13 @@ def test_acp_cmd_passes_local_diagnostics(monkeypatch, tmp_path):
             "--workspace",
             str(tmp_path),
             "--local-diagnostics",
+            f"--agent-mode",
+            f"custom:quality",
+            *(
+                [f"--goal-token-budget", str(budget)]
+                if budget is not None
+                else []
+            ),
         ],
     )
 
@@ -33,10 +42,40 @@ def test_acp_cmd_passes_local_diagnostics(monkeypatch, tmp_path):
     assert captured["agent_id"] == "writer"
     assert captured["workspace_dir"] == tmp_path
     assert captured["local_diagnostics"] is True
-    assert captured["mode"] is None
+    assert captured[f"agent_mode"] == f"custom:quality"
+    assert captured[f"goal_token_budget"] == (0 if budget is None else budget)
+    assert captured[f"code_mode"] is False
 
 
-def test_acp_cmd_passes_coding_mode(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    f"args",
+    [
+        [f"--agent-mode", f"coding"],
+        [f"--mode", f"coding"],
+    ],
+)
+def test_acp_cmd_enables_coding_mode(monkeypatch, tmp_path, args):
+    captured = {}
+
+    async def fake_run_qwenpaw_agent(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(
+        "qwenpaw.agents.acp.server.run_qwenpaw_agent",
+        fake_run_qwenpaw_agent,
+    )
+
+    result = CliRunner().invoke(
+        acp_cmd,
+        [f"--workspace", str(tmp_path), *args],
+    )
+
+    assert result.exit_code == 0
+    assert captured[f"agent_mode"] is None
+    assert captured[f"code_mode"] is True
+
+
+def test_acp_cmd_allows_goal_and_coding(monkeypatch, tmp_path):
     captured = {}
 
     async def fake_run_qwenpaw_agent(**kwargs):
@@ -50,12 +89,15 @@ def test_acp_cmd_passes_coding_mode(monkeypatch, tmp_path):
     result = CliRunner().invoke(
         acp_cmd,
         [
-            "--workspace",
+            f"--workspace",
             str(tmp_path),
-            "--mode",
-            "coding",
+            f"--agent-mode",
+            f"goal",
+            f"--mode",
+            f"coding",
         ],
     )
 
     assert result.exit_code == 0
-    assert captured["mode"] == "coding"
+    assert captured[f"agent_mode"] == f"goal"
+    assert captured[f"code_mode"] is True

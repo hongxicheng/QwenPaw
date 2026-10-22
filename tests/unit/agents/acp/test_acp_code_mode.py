@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Tests for ACP ``--mode coding`` activation."""
+"""Tests for ACP Code Mode activation."""
+# pylint: disable=protected-access
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -9,6 +10,28 @@ from qwenpaw.agents.acp.server import QwenPawACPAgent
 
 def _config(enabled: bool) -> SimpleNamespace:
     return SimpleNamespace(coding_mode=SimpleNamespace(enabled=enabled))
+
+
+def test_agent_mode_coding_normalizes_to_code_mode():
+    agent = QwenPawACPAgent(agent_mode=f"coding")
+
+    assert agent._code_mode is True
+    assert agent._agent_mode is None
+    assert agent._apply_agent_mode(f"Solve", f"session", None) == f"Solve"
+
+
+def test_code_mode_can_combine_with_a_loop_mode():
+    agent = QwenPawACPAgent(agent_mode=f"goal", code_mode=True)
+
+    assert agent._code_mode is True
+    assert agent._agent_mode == f"goal"
+
+
+def test_default_does_not_enable_code_mode():
+    agent = QwenPawACPAgent()
+
+    assert agent._code_mode is False
+    assert agent._agent_mode is None
 
 
 def test_enable_coding_mode_flips_and_saves(monkeypatch):
@@ -43,4 +66,4 @@ def test_enable_coding_mode_is_idempotent(monkeypatch):
 
     QwenPawACPAgent._enable_coding_mode("default")
 
-    assert saved == []
+    assert not saved
